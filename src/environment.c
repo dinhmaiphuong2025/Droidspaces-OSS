@@ -84,8 +84,6 @@ void ds_env_boot_setup(struct ds_config *cfg) {
   if (is_android() && cfg->wayland) {
     setenv("WAYLAND_DISPLAY", DS_WAYLAND_DISPLAY_SOCK, 1);
     setenv("XDG_RUNTIME_DIR", DS_WAYLAND_CONTAINER_DIR, 0);
-    setenv("DS_WAYLAND_SOCKET", DS_WAYLAND_BRIDGE_SOCK, 1);
-    setenv("ANLAND_SOCKET", DS_WAYLAND_BRIDGE_SOCK, 1);
     setenv("MESA_LOADER_DRIVER_OVERRIDE", "kgsl", 0);
     setenv("GALLIUM_DRIVER", "kgsl", 0);
     setenv("FD_FORCE_KGSL", "1", 0);
@@ -129,8 +127,6 @@ void ds_env_save(const char *path, struct ds_config *cfg) {
   if (is_android() && cfg->wayland) {
     fprintf(f, "export WAYLAND_DISPLAY='" DS_WAYLAND_DISPLAY_SOCK "'\n");
     fprintf(f, "export XDG_RUNTIME_DIR='" DS_WAYLAND_CONTAINER_DIR "'\n");
-    fprintf(f, "export DS_WAYLAND_SOCKET='" DS_WAYLAND_BRIDGE_SOCK "'\n");
-    fprintf(f, "export ANLAND_SOCKET='" DS_WAYLAND_BRIDGE_SOCK "'\n");
     fprintf(f, "export MESA_LOADER_DRIVER_OVERRIDE='kgsl'\n");
     fprintf(f, "export GALLIUM_DRIVER='kgsl'\n");
     fprintf(f, "export FD_FORCE_KGSL='1'\n");
