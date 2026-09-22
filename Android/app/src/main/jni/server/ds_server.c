@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: MIT
+/*
+ * Droidspaces Embedded Wayland Server - Main Server Lifecycle
+ * Copyright (C) 2026 Droidspaces contributors
+ */
+
+#include "ds_server.h"
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static void *server_event_thread(void *arg) {
+  struct ds_server *server = arg;
+  DS_LOGI("Wayland Server event loop thread started");
+
+  while (atomic_load(&server->running)) {
+    wl_event_loop_dispatch(server->loop, 16);
+    wl_display_flush_clients(server->display);
+  }
+
+  DS_LOGI("Wayland Server event loop thread exiting");
+  return NULL;
+}
+
+struct ds_server *ds_server_create(const char *socket_dir, int width, int height,
+                                  int refresh_mhz, ANativeWindow *window) {
+  struct ds_server *server = calloc(1, sizeof(*server));
+  if (!server) return NULL;
+
+  pthread_mutex_init(&server->lock, NULL);
+  wl_list_init(&server->surfaces);
+
+  server->width = width;
+  server->height = height;
+  server->refresh_mhz = refresh_mhz;
+  server->window = window;
+
+  server->display = wl_display_create();
+  if (!server->display) {
+    DS_LOGE("Failed to create Wayland display");
+    free(server);
+    return NULL;
+  }
+
+  server->loop = wl_display_get_event_loop(server->display);
+
+  /* Set up socket directory */
+  if (socket_dir && strlen(socket_dir) > 0) {
+    mkdir(socket_dir, 0777);
+    chmod(socket_dir, 0777);
+    setenv("XDG_RUNTIME_DIR", socket_dir, 1);
+  }
+
+  const char *sock_name = wl_display_add_socket_auto(server->display);
+  if (!sock_name) {
+    DS_LOGE("Failed to add socket to Wayland display");
+    wl_display_destroy(server->display);
+    free(server);
+    return NULL;
+  }
+  DS_LOGI("Wayland display listening on socket: %s (in %s)", sock_name,
+          socket_dir ? socket_dir : "default");
+
+  /* Initialize core Wayland SHM */
+  wl_display_init_shm(server->display);
+
+  /* Initialize sub-protocols */
+  ds_compositor_init(server);
+  ds_xdg_shell_init(server);
+  ds_dmabuf_init(server);
+  ds_output_init(server, width, height, refresh_mhz);
+  ds_seat_init(server);
+  ds_viewporter_init(server);
+
+  /* Start event loop thread */
+  atomic_store(&server->running, 1);
+  if (pthread_create(&server->loop_thread, NULL, server_event_thread, server) != 0) {
+    DS_LOGE("Failed to create server event loop thread: %s", strerror(errno));
+    wl_display_destroy(server->display);
+    free(server);
+    return NULL;
+  }
+
+  return server;
+}
+
+void ds_server_destroy(struct ds_server *server) {
+  if (!server) return;
+
+  DS_LOGI("Stopping Wayland Server...");
+  atomic_store(&server->running, 0);
+
+  if (server->loop) {
+    /* Wake up event loop */
+    wl_display_flush_clients(server->display);
+  }
+
+  pthread_join(server->loop_thread, NULL);
+
+  if (server->output) {
+    if (server->output->global) wl_global_destroy(server->output->global);
+    free(server->output);
+  }
+
+  if (server->seat) {
+    if (server->seat->global) wl_global_destroy(server->seat->global);
+    if (server->seat->keymap_fd >= 0) close(server->seat->keymap_fd);
+    free(server->seat);
+  }
+
+  if (server->compositor_global) wl_global_destroy(server->compositor_global);
+  if (server->subcompositor_global) wl_global_destroy(server->subcompositor_global);
+  if (server->xdg_wm_base_global) wl_global_destroy(server->xdg_wm_base_global);
+  if (server->dmabuf_global) wl_global_destroy(server->dmabuf_global);
+  if (server->viewporter_global) wl_global_destroy(server->viewporter_global);
+
+  wl_display_destroy(server->display);
+  pthread_mutex_destroy(&server->lock);
+  free(server);
+  DS_LOGI("Wayland Server destroyed");
+}

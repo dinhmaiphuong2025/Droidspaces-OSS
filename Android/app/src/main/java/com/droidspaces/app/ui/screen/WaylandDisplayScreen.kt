@@ -152,7 +152,7 @@ fun WaylandDisplayScreen(
                             }
                             val refreshMhz = (refreshRate * 1000).toInt()
 
-                            val socketPath = "/data/local/tmp/ds-wayland/ds-wayland.sock"
+                            val socketPath = "/data/local/tmp/ds-wayland/wayland-0"
                             WaylandNative.nativeSetSurface(
                                 surface = holder.surface,
                                 width = w,
