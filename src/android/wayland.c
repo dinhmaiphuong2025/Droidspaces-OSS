@@ -325,14 +325,19 @@ int ds_setup_wayland_socket(struct ds_config *cfg) {
   mkdir_p(DS_WAYLAND_CONTAINER_DIR, 01777);
   chmod(DS_WAYLAND_CONTAINER_DIR, 01777);
 
-  const char *src = DS_WAYLAND_HOST_BRIDGE;
-  const char *dst = DS_WAYLAND_BRIDGE_SOCK;
-
-  if (access(src, F_OK) != 0) {
-    ds_warn("Wayland: bridge socket not found at %s - skipping mount", src);
+  /* Since setup_hardware_access runs after pivot_root, host root is at /.old_root */
+  const char *src = NULL;
+  if (access(DS_WAYLAND_OLDROOT_BRIDGE, F_OK) == 0) {
+    src = DS_WAYLAND_OLDROOT_BRIDGE;
+  } else if (access(DS_WAYLAND_HOST_BRIDGE, F_OK) == 0) {
+    src = DS_WAYLAND_HOST_BRIDGE;
+  } else {
+    ds_warn("Wayland: bridge socket not found at %s or %s - skipping mount",
+            DS_WAYLAND_OLDROOT_BRIDGE, DS_WAYLAND_HOST_BRIDGE);
     return 0;
   }
 
+  const char *dst = DS_WAYLAND_BRIDGE_SOCK;
   if (ds_bind_mount_socket(src, dst, 0, "Wayland") < 0)
     return -1;
 
@@ -340,6 +345,6 @@ int ds_setup_wayland_socket(struct ds_config *cfg) {
     /* Optional compatibility path for anland legacy clients */
   }
 
-  ds_log("[Wayland] bridge socket bind-mounted to %s", dst);
+  ds_log("[Wayland] bridge socket bind-mounted to %s and /run/display.sock", dst);
   return 0;
 }

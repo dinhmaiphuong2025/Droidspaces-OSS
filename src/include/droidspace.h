@@ -157,6 +157,7 @@
 #define DS_WAYLAND_CONTAINER_DIR "/run"
 #define DS_WAYLAND_BRIDGE_SOCK "/run/ds-wayland.sock"
 #define DS_WAYLAND_HOST_BRIDGE "/data/local/tmp/ds-wayland/ds-wayland.sock"
+#define DS_WAYLAND_OLDROOT_BRIDGE "/.old_root/data/local/tmp/ds-wayland/ds-wayland.sock"
 
 /* File Extensions */
 #define DS_EXT_PID ".pid"
