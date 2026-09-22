@@ -5,7 +5,7 @@ import android.view.Surface
 object WaylandNative {
     init {
         try {
-            System.loadLibrary("ds_wayland_consumer")
+            System.loadLibrary("ds_wl_server")
             nativeInit()
         } catch (e: UnsatisfiedLinkError) {
             e.printStackTrace()
