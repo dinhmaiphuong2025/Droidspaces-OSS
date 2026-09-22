@@ -702,6 +702,8 @@ private fun PremiumInitSystemCard(
                             Spacer(Modifier.width(6.dp))
                             Text(context.getString(R.string.manage), fontWeight = FontWeight.SemiBold)
                         }
+                    }
+                }
             }
         }
     }
@@ -791,9 +793,6 @@ private fun WaylandDisplayCard(
         }
     }
 }
-    }
-}
-
 
 /**
  * Dynamic Height Synced Grid - measures all items and applies max height to all.

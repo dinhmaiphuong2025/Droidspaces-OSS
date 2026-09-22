@@ -248,9 +248,9 @@ Java_com_droidspaces_app_ui_wayland_WaylandNative_nativeSetSurface(
     }
 
     struct anw_window *aw = (struct anw_window *)win;
-    api.dequeueBuffer = aw->dequeueBuffer;
-    api.queueBuffer   = aw->queueBuffer;
-    api.cancelBuffer  = aw->cancelBuffer;
+    api.dequeueBuffer = (int (*)(ANativeWindow *, ANativeWindowBuffer **, int *))(void *)aw->dequeueBuffer;
+    api.queueBuffer   = (int (*)(ANativeWindow *, ANativeWindowBuffer *, int))(void *)aw->queueBuffer;
+    api.cancelBuffer  = (int (*)(ANativeWindow *, ANativeWindowBuffer *, int))(void *)aw->cancelBuffer;
 
     anw_api_connect(win, ANW_API_CPU);
 
