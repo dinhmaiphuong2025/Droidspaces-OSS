@@ -81,7 +81,17 @@ void ds_env_boot_setup(struct ds_config *cfg) {
    * and sourced by /etc/profile.d/droidspaces_env.sh) */
   if (is_android() && cfg->termux_x11)
     setenv("DISPLAY", TX11_DISPLAY_STR, 1);
-  if (is_android() && cfg->virgl)
+  if (is_android() && cfg->wayland) {
+    setenv("WAYLAND_DISPLAY", DS_WAYLAND_DISPLAY_SOCK, 1);
+    setenv("XDG_RUNTIME_DIR", DS_WAYLAND_CONTAINER_DIR, 0);
+    setenv("DS_WAYLAND_SOCKET", DS_WAYLAND_BRIDGE_SOCK, 1);
+    setenv("ANLAND_SOCKET", DS_WAYLAND_BRIDGE_SOCK, 1);
+    setenv("MESA_LOADER_DRIVER_OVERRIDE", "kgsl", 0);
+    setenv("GALLIUM_DRIVER", "kgsl", 0);
+    setenv("FD_FORCE_KGSL", "1", 0);
+    setenv("FD_DEV_FEATURES", "enable_tp_ubwc_flag_hint=1", 0);
+  }
+  if (is_android() && cfg->virgl && !cfg->wayland)
     setenv("GALLIUM_DRIVER", "virpipe", 1);
   if (is_android() && cfg->pulseaudio)
     setenv("PULSE_SERVER", "unix:" DS_PULSE_SOCKET, 1);
@@ -116,7 +126,17 @@ void ds_env_save(const char *path, struct ds_config *cfg) {
   /* Write DISPLAY for Termux-X11 containers so /etc/profile.d picks it up */
   if (is_android() && cfg->termux_x11)
     fprintf(f, "export DISPLAY='" TX11_DISPLAY_STR "'\n");
-  if (is_android() && cfg->virgl)
+  if (is_android() && cfg->wayland) {
+    fprintf(f, "export WAYLAND_DISPLAY='" DS_WAYLAND_DISPLAY_SOCK "'\n");
+    fprintf(f, "export XDG_RUNTIME_DIR='" DS_WAYLAND_CONTAINER_DIR "'\n");
+    fprintf(f, "export DS_WAYLAND_SOCKET='" DS_WAYLAND_BRIDGE_SOCK "'\n");
+    fprintf(f, "export ANLAND_SOCKET='" DS_WAYLAND_BRIDGE_SOCK "'\n");
+    fprintf(f, "export MESA_LOADER_DRIVER_OVERRIDE='kgsl'\n");
+    fprintf(f, "export GALLIUM_DRIVER='kgsl'\n");
+    fprintf(f, "export FD_FORCE_KGSL='1'\n");
+    fprintf(f, "export FD_DEV_FEATURES='enable_tp_ubwc_flag_hint=1'\n");
+  }
+  if (is_android() && cfg->virgl && !cfg->wayland)
     fprintf(f, "export GALLIUM_DRIVER='virpipe'\n");
   if (is_android() && cfg->pulseaudio)
     fprintf(f, "export PULSE_SERVER='unix:" DS_PULSE_SOCKET "'\n");

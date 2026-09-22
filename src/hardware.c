@@ -415,15 +415,18 @@ int setup_gpu_groups(void) {
 int setup_hardware_access(struct ds_config *cfg) {
   /* 1. Create GPU groups inside the container.
    *    hw_access: full hardware passthrough - always set up GPU groups.
-   *    gpu_mode:  isolated tmpfs with GPU nodes mirrored in - also needs the
+   *    gpu_mode / wayland: isolated tmpfs with GPU nodes mirrored in - also needs
    *               unified droidspaces-gpu group so the container user can
    *               actually open those nodes. */
-  if (cfg->hw_access || cfg->gpu_mode)
+  if (cfg->hw_access || cfg->gpu_mode || cfg->wayland)
     setup_gpu_groups();
 
   /* 2. Mount X11 socket for GUI applications (always attempt on Linux, check
    * flag on Android) */
   ds_setup_x11_socket(cfg);
+
+  /* 2b. Mount Wayland socket for Wayland compositors (Android only) */
+  ds_setup_wayland_socket(cfg);
 
   /* 3. Setup VirGL socket (Android only) */
   ds_setup_virgl_socket(cfg);

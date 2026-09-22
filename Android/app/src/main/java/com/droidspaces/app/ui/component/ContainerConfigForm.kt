@@ -456,6 +456,15 @@ fun ContainerConfigForm(
         )
 
         ToggleCard(
+            icon = Icons.Default.Tv,
+            title = context.getString(R.string.wayland_display),
+            description = context.getString(R.string.wayland_display_description),
+            checked = state.enableWayland,
+            onCheckedChange = { onStateChange(state.copy(enableWayland = it)) },
+            enabled = true
+        )
+
+        ToggleCard(
             icon = Icons.Default.Layers,
             title = context.getString(R.string.enable_virgl),
             description = context.getString(R.string.enable_virgl_description),
@@ -609,6 +618,24 @@ fun ContainerConfigForm(
                 shape = modernFieldShape,
                 colors = modernFieldColors,
                 leadingIcon = { Icon(painter = painterResource(R.drawable.ic_x11), contentDescription = null, modifier = Modifier.size(15.dp)) }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = state.enableWayland,
+            enter = expandVertically(animationSpec = tween(durationMillis = 300)) + fadeIn(animationSpec = tween(durationMillis = 300)),
+            exit = shrinkVertically(animationSpec = tween(durationMillis = 300)) + fadeOut(animationSpec = tween(durationMillis = 300))
+        ) {
+            OutlinedTextField(
+                value = state.waylandExtraFlags,
+                onValueChange = { onStateChange(state.copy(waylandExtraFlags = it)) },
+                label = { Text(context.getString(R.string.wayland_extra_flags_label)) },
+                placeholder = { Text(context.getString(R.string.wayland_extra_flags_placeholder)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = modernFieldShape,
+                colors = modernFieldColors,
+                leadingIcon = { Icon(imageVector = Icons.Default.Tv, contentDescription = null, modifier = Modifier.size(15.dp)) }
             )
         }
 

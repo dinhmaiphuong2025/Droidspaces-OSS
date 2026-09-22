@@ -61,7 +61,8 @@ fun ContainerDetailsScreen(
     container: ContainerInfo,
     onNavigateBack: () -> Unit,
     onNavigateToServices: (InitSystem) -> Unit = {},
-    onNavigateToTerminal: () -> Unit = {}
+    onNavigateToTerminal: () -> Unit = {},
+    onNavigateToWaylandDisplay: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -255,6 +256,16 @@ fun ContainerDetailsScreen(
                     containerName = container.name,
                     onOpenTerminal = onNavigateToTerminal
                 )
+            }
+
+            if (container.enableWayland) {
+                item(key = "wayland_${container.name}") {
+                    WaylandDisplayCard(
+                        containerName = container.name,
+                        isRunning = container.isRunning,
+                        onOpenDisplay = onNavigateToWaylandDisplay
+                    )
+                }
             }
 
             item(key = "systemd_${container.name}") {
@@ -691,10 +702,95 @@ private fun PremiumInitSystemCard(
                             Spacer(Modifier.width(6.dp))
                             Text(context.getString(R.string.manage), fontWeight = FontWeight.SemiBold)
                         }
-                    }
-                }
             }
         }
+    }
+}
+
+@Composable
+private fun WaylandDisplayCard(
+    containerName: String,
+    isRunning: Boolean,
+    onOpenDisplay: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = AnimationUtils.cardFadeSpec(),
+        label = "wayland_card_fade"
+    )
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 88.dp)
+            .alpha(alpha)
+            .graphicsLayer { this.alpha = alpha },
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Tv,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Column {
+                    Text(
+                        text = context.getString(R.string.wayland_display),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = if (isRunning) context.getString(R.string.enabled_legend) else context.getString(R.string.container_stopped),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+
+            Button(
+                onClick = onOpenDisplay,
+                enabled = isRunning,
+                modifier = Modifier.widthIn(min = 140.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Icon(
+                    Icons.Default.Tv,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    context.getString(R.string.action_display),
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    }
+}
     }
 }
 

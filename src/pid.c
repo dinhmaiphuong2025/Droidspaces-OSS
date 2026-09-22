@@ -874,6 +874,9 @@ int check_selinux_permissive_needs(void) {
 int check_x11_needs(void) {
   return ds_feature_needs(offsetof(struct ds_config, termux_x11));
 }
+int check_wayland_needs(void) {
+  return ds_feature_needs(offsetof(struct ds_config, wayland));
+}
 int check_virgl_needs(void) {
   return ds_feature_needs(offsetof(struct ds_config, virgl));
 }

@@ -82,6 +82,8 @@ void print_usage(void) {
       "      --gpu                 Enable GPU acceleration nodes\n"
       "  -X, --termux-x11          Configure Termux-X11 display support\n"
       "      --tx11-flags=\"FLAGS\"    Extra flags passed to termux-x11\n"
+      "  -W, --wayland             Configure Wayland display support\n"
+      "      --wayland-flags=\"FLAGS\" Extra flags passed to Wayland display\n"
       "      --virgl               Configure VirGL 3D acceleration support\n"
       "      --virgl-flags=\"FLAGS\"   Extra flags passed to "
       "virgl_test_server_android\n"
@@ -372,6 +374,8 @@ static struct option long_options[] = {
     {"hw-access", no_argument, 0, 'H'},
     {"termux-x11", no_argument, 0, 'X'},
     {"tx11-flags", required_argument, 0, 271},
+    {"wayland", no_argument, 0, 'W'},
+    {"wayland-flags", required_argument, 0, 280},
     {"disable-ipv6", no_argument, 0, 'I'},
     {"enable-android-storage", no_argument, 0, 'S'},
     {"selinux-permissive", no_argument, 0, 'P'},
@@ -422,7 +426,7 @@ int ds_apply_cli_overrides(int argc, char **argv, struct ds_config *cfg,
 
   /* Strict mode for 'run' prevents stealing arguments from the sub-command. */
   const char *optstring =
-      strict ? "+r:i:n:h:d:fHXPvVB:C:E:u:" : "r:i:n:h:d:fHXPvVB:C:E:u:";
+      strict ? "+r:i:n:h:d:fHXWPvVB:C:E:u:" : "r:i:n:h:d:fHXWPvVB:C:E:u:";
 
   /* --reset must wipe the config BEFORE the other flags land on top, but
    * getopt hands us options in argv order. Scan for it first so
@@ -482,6 +486,13 @@ int ds_apply_cli_overrides(int argc, char **argv, struct ds_config *cfg,
     case 271:
       free(cfg->tx11_extra_flags);
       cfg->tx11_extra_flags = optarg[0] ? strdup(optarg) : NULL;
+      break;
+    case 'W':
+      cfg->wayland = 1;
+      break;
+    case 280:
+      free(cfg->wayland_extra_flags);
+      cfg->wayland_extra_flags = optarg[0] ? strdup(optarg) : NULL;
       break;
     case 270:
       cfg->virgl = 1;
@@ -919,7 +930,7 @@ int main(int argc, char **argv) {
 
   /* 1. Discovery Pass: Capture identity and command without permuting argv.
    * Using '-' at the start of optstring returns non-options as '1'. */
-  while ((opt = getopt_long(argc, argv, "-r:i:n:h:d:fHXPvVB:C:E:u:",
+  while ((opt = getopt_long(argc, argv, "-r:i:n:h:d:fHXWPvVB:C:E:u:",
                             long_options, NULL)) != -1) {
     if (opt == 1) { /* Non-option argument */
       if (!discovered_cmd) {

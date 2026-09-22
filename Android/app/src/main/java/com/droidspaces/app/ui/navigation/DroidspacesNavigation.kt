@@ -121,6 +121,10 @@ sealed class Screen(val route: String) {
     data object Terminal : Screen("terminal/{containerName}") {
         fun createRoute(containerName: String) = "terminal/${Uri.encode(containerName)}"
     }
+
+    data object WaylandDisplay : Screen("wayland_display/{containerName}") {
+        fun createRoute(containerName: String) = "wayland_display/${Uri.encode(containerName)}"
+    }
 }
 
 /**
@@ -628,6 +632,9 @@ fun DroidspacesNavigation(
                     },
                     onNavigateToTerminal = {
                         navController.navigate(Screen.Terminal.createRoute(containerName))
+                    },
+                    onNavigateToWaylandDisplay = {
+                        navController.navigate(Screen.WaylandDisplay.createRoute(containerName))
                     }
                 )
             } ?: LaunchedEffect(Unit) {
@@ -761,6 +768,24 @@ fun DroidspacesNavigation(
                 onNavigateBack = {
                     navController.popBackStack()
                     sharedContainerViewModel.refresh()
+                }
+            )
+        }
+
+        composable(
+            route = Screen.WaylandDisplay.route,
+            arguments = listOf(
+                navArgument("containerName") { type = NavType.StringType }
+            ),
+            enterTransition = defaultEnterTransition,
+            exitTransition = defaultExitTransition
+        ) { backStackEntry ->
+            val containerName = backStackEntry.arguments?.getString("containerName") ?: ""
+            com.droidspaces.app.ui.screen.WaylandDisplayScreen(
+                containerName = containerName,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToTerminal = { name ->
+                    navController.navigate(Screen.Terminal.createRoute(name))
                 }
             )
         }

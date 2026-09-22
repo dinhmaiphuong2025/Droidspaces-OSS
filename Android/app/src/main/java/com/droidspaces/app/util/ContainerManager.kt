@@ -35,6 +35,8 @@ data class ContainerInfo(
     val enableGpuMode: Boolean = false,
     val enableTermuxX11: Boolean = false,
     val tx11ExtraFlags: String = "",
+    val enableWayland: Boolean = false,
+    val waylandExtraFlags: String = "",
     val enableVirgl: Boolean = false,
     val virglExtraFlags: String = "",
     val enablePulseaudio: Boolean = false,
@@ -79,6 +81,8 @@ data class ContainerInfo(
         appendLine("enable_gpu_mode=${if (enableGpuMode) "1" else "0"}")
         appendLine("enable_termux_x11=${if (enableTermuxX11) "1" else "0"}")
         if (tx11ExtraFlags.isNotBlank()) appendLine("tx11_extra_flags=$tx11ExtraFlags")
+        appendLine("enable_wayland=${if (enableWayland) "1" else "0"}")
+        if (waylandExtraFlags.isNotBlank()) appendLine("wayland_extra_flags=$waylandExtraFlags")
         appendLine("enable_virgl=${if (enableVirgl) "1" else "0"}")
         if (virglExtraFlags.isNotBlank()) appendLine("virgl_extra_flags=$virglExtraFlags")
         appendLine("enable_pulseaudio=${if (enablePulseaudio) "1" else "0"}")
@@ -389,6 +393,8 @@ object ContainerManager {
                 enableGpuMode = configMap["enable_gpu_mode"] == "1",
                 enableTermuxX11 = configMap["enable_termux_x11"] == "1",
                 tx11ExtraFlags = configMap["tx11_extra_flags"] ?: "",
+                enableWayland = configMap["enable_wayland"] == "1",
+                waylandExtraFlags = configMap["wayland_extra_flags"] ?: "",
                 enableVirgl = configMap["enable_virgl"] == "1",
                 virglExtraFlags = configMap["virgl_extra_flags"] ?: "",
                 enablePulseaudio = configMap["enable_pulseaudio"] == "1",

@@ -151,10 +151,18 @@
 #define TX11_PACTL_BIN TX11_PREFIX "/bin/pactl"
 #define TX11_PULSE_DEFAULT_SINK "AAudio_sink"
 
+/* Wayland Display paths (Android only) */
+#define DS_WAYLAND_SOCK_DIR "/data/local/tmp/ds-wayland"
+#define DS_WAYLAND_DISPLAY_SOCK "wayland-0"
+#define DS_WAYLAND_CONTAINER_DIR "/run"
+#define DS_WAYLAND_BRIDGE_SOCK "/run/ds-wayland.sock"
+#define DS_WAYLAND_HOST_BRIDGE "/data/local/tmp/ds-wayland/ds-wayland.sock"
+
 /* File Extensions */
 #define DS_EXT_PID ".pid"
 #define DS_EXT_XPID ".xpid"
 #define DS_EXT_VPID ".vpid"
+#define DS_EXT_WPID ".wpid"
 #define DS_EXT_MOUNT ".mount"
 #define DS_EXT_LOCK ".lock"
 #define DS_EXT_INIT ".init"
@@ -349,6 +357,8 @@ struct ds_config {
   int gpu_mode;           /* --gpu: mirror GPU nodes into isolated tmpfs /dev */
   int termux_x11;         /* --termux-x11 (Android only) */
   char *tx11_extra_flags; /* --tx11-flags "..." (heap, NULL if unset) */
+  int wayland;            /* --wayland (Android only) */
+  char *wayland_extra_flags; /* --wayland-flags "..." (heap, NULL if unset) */
   int virgl;              /* --virgl (Android only) */
   char *virgl_extra_flags; /* --virgl-flags "..." (heap, NULL if unset) */
   int pulseaudio;          /* --pulse-audio (Android only) */
@@ -370,6 +380,7 @@ struct ds_config {
   pid_t container_pid;            /* PID 1 of the container (host view) */
   pid_t intermediate_pid;         /* intermediate fork pid */
   pid_t x11_pid;                  /* PID of the Termux-X11 server process */
+  pid_t wayland_pid;              /* PID of the Wayland bridge daemon process */
   pid_t virgl_pid;                /* PID of the VirGL server process */
   pid_t pulse_pid;                /* PID of the PulseAudio daemon process */
   int is_img_mount;               /* 1 if rootfs was loop-mounted from .img */
@@ -671,6 +682,12 @@ int ds_x11_daemon_start(struct ds_config *cfg);
 void ds_x11_daemon_stop(struct ds_config *cfg);
 int ds_setup_x11_socket(struct ds_config *cfg);
 
+/* wayland.c */
+
+int ds_wayland_daemon_start(struct ds_config *cfg);
+void ds_wayland_daemon_stop(struct ds_config *cfg);
+int ds_setup_wayland_socket(struct ds_config *cfg);
+
 /* virgl-android.c */
 
 int ds_virgl_daemon_start(struct ds_config *cfg);
@@ -849,6 +866,7 @@ int show_containers(struct ds_config *cfg);
 int scan_containers(void);
 int check_selinux_permissive_needs(void);
 int check_x11_needs(void);
+int check_wayland_needs(void);
 int check_virgl_needs(void);
 int check_pulse_needs(void);
 

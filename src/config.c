@@ -278,6 +278,11 @@ int ds_config_load(const char *config_path, struct ds_config *cfg) {
     } else if (strcmp(key, "tx11_extra_flags") == 0) {
       free(cfg->tx11_extra_flags);
       cfg->tx11_extra_flags = val[0] ? strdup(val) : NULL;
+    } else if (strcmp(key, "enable_wayland") == 0) {
+      cfg->wayland = parse_bool(val);
+    } else if (strcmp(key, "wayland_extra_flags") == 0) {
+      free(cfg->wayland_extra_flags);
+      cfg->wayland_extra_flags = val[0] ? strdup(val) : NULL;
     } else if (strcmp(key, "enable_virgl") == 0) {
       cfg->virgl = parse_bool(val);
     } else if (strcmp(key, "virgl_extra_flags") == 0) {
@@ -616,6 +621,8 @@ void ds_config_free(struct ds_config *cfg) {
   free_config_unknown_lines(cfg);
   free(cfg->tx11_extra_flags);
   cfg->tx11_extra_flags = NULL;
+  free(cfg->wayland_extra_flags);
+  cfg->wayland_extra_flags = NULL;
   free(cfg->virgl_extra_flags);
   cfg->virgl_extra_flags = NULL;
 }
@@ -646,6 +653,9 @@ static void ds_config_serialize_known(FILE *f, struct ds_config *cfg) {
     fprintf(f, "enable_termux_x11=%d\n", cfg->termux_x11);
     if (cfg->tx11_extra_flags)
       fprintf(f, "tx11_extra_flags=%s\n", cfg->tx11_extra_flags);
+    fprintf(f, "enable_wayland=%d\n", cfg->wayland);
+    if (cfg->wayland_extra_flags)
+      fprintf(f, "wayland_extra_flags=%s\n", cfg->wayland_extra_flags);
     fprintf(f, "enable_virgl=%d\n", cfg->virgl);
     if (cfg->virgl_extra_flags)
       fprintf(f, "virgl_extra_flags=%s\n", cfg->virgl_extra_flags);
@@ -1010,8 +1020,10 @@ void ds_config_reset_defaults(struct ds_config *cfg) {
   free_config_env_vars(cfg);
   free_config_binds(cfg);
   free(cfg->tx11_extra_flags);
+  free(cfg->wayland_extra_flags);
   free(cfg->virgl_extra_flags);
   cfg->tx11_extra_flags = NULL;
+  cfg->wayland_extra_flags = NULL;
   cfg->virgl_extra_flags = NULL;
   memset(cfg, 0, sizeof(*cfg));
 

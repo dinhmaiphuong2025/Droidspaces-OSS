@@ -100,7 +100,7 @@ object ValidationUtils {
         fun hasControl(v: String) = v.any { it.isISOControl() }
         val invalid = listOf(
             config.dnsServers, config.staticNatIp, config.customInit,
-            config.tx11ExtraFlags, config.virglExtraFlags, config.privileged,
+            config.tx11ExtraFlags, config.waylandExtraFlags, config.virglExtraFlags, config.privileged,
             config.gatewayContainer, config.gatewayNet, config.gatewayIface, config.gatewayBridge
         ).any { hasControl(it) }
         return if (invalid) {

@@ -218,6 +218,13 @@
     <string name="gpu_access_description">Mirror GPU nodes into isolated /dev (no full hardware passthrough)</string>
     <string name="termux_x11">Configure Termux:X11</string>
     <string name="termux_x11_description">Enable X11 socket mounting for Termux:X11</string>
+    <string name="wayland_display">Wayland Display (Snapdragon)</string>
+    <string name="wayland_display_description">Enable built-in zero-copy Wayland display bridge for Snapdragon (Niri / WM)</string>
+    <string name="wayland_extra_flags_label">Wayland Extra Flags</string>
+    <string name="wayland_extra_flags_placeholder">e.g. --render-boost</string>
+    <string name="wayland_option">Wayland</string>
+    <string name="container_stopped">Stopped</string>
+    <string name="action_display">Display</string>
     <string name="enable_pulseaudio">Configure PulseAudio</string>
     <string name="enable_pulseaudio_description">Enable audio support via PulseAudio</string>
     <string name="tx11_extra_flags_label">Termux:X11 Extra Flags</string>

@@ -200,6 +200,7 @@ void cleanup_container_resources(struct ds_config *cfg, pid_t pid,
 
   if (is_android() && !skip_unmount) {
     ds_x11_daemon_stop(cfg);
+    ds_wayland_daemon_stop(cfg);
     ds_virgl_daemon_stop(cfg);
     ds_pulse_daemon_stop(cfg);
     if (count_running_containers(NULL, 0) == 0) {
@@ -429,6 +430,10 @@ int start_rootfs(struct ds_config *cfg) {
     ds_warn("--termux-x11 is only applicable on Android. Skipping.");
   if (cfg->tx11_extra_flags && !is_android())
     ds_warn("--tx11-flags is only applicable on Android. Skipping.");
+  if (cfg->wayland && !is_android())
+    ds_warn("--wayland is only applicable on Android. Skipping.");
+  if (cfg->wayland_extra_flags && !is_android())
+    ds_warn("--wayland-flags is only applicable on Android. Skipping.");
   if (cfg->virgl && !is_android())
     ds_warn("--virgl is only applicable on Android. Skipping.");
   if (cfg->virgl_extra_flags && !is_android())
@@ -504,6 +509,11 @@ int start_rootfs(struct ds_config *cfg) {
     if (ds_x11_daemon_start(cfg) == 0)
       wait_for_socket_or_death(
           cfg->x11_pid, TX11_SOCK_DIR "/" TX11_DISPLAY_SOCK, 5000, 50000);
+  }
+
+  if (is_android() && cfg->wayland) {
+    if (ds_wayland_daemon_start(cfg) == 0)
+      wait_for_socket_or_death(cfg->wayland_pid, DS_WAYLAND_HOST_BRIDGE, 3000, 30000);
   }
 
   if (is_android() && cfg->virgl) {
@@ -1595,6 +1605,9 @@ int show_info(struct ds_config *cfg, int trust_cfg_pid) {
       ds_json_int("termux_x11", cfg->termux_x11, &first);
       if (cfg->tx11_extra_flags)
         ds_json_str("tx11_flags", cfg->tx11_extra_flags, &first);
+      ds_json_int("wayland", cfg->wayland, &first);
+      if (cfg->wayland_extra_flags)
+        ds_json_str("wayland_flags", cfg->wayland_extra_flags, &first);
       ds_json_int("virgl", cfg->virgl, &first);
       if (cfg->virgl_extra_flags)
         ds_json_str("virgl_flags", cfg->virgl_extra_flags, &first);
@@ -1775,6 +1788,12 @@ int show_info(struct ds_config *cfg, int trust_cfg_pid) {
     /* 7. Termux-X11 */
     if (is_android() && cfg->termux_x11) {
       printf("  Termux-X11: enabled\n");
+      feat_count++;
+    }
+
+    /* 7b. Wayland */
+    if (is_android() && cfg->wayland) {
+      printf("  Wayland: enabled\n");
       feat_count++;
     }
 

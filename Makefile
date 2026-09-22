@@ -60,6 +60,7 @@ SRCS = $(SRC_DIR)/main.c \
        $(SRC_DIR)/daemon.c \
        $(SRC_DIR)/check.c \
        $(SRC_DIR)/android/x11.c \
+       $(SRC_DIR)/android/wayland.c \
        $(SRC_DIR)/android/virgl.c \
        $(SRC_DIR)/android/pulseaudio.c \
        $(SRC_DIR)/virtualize.c

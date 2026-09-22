@@ -370,7 +370,8 @@ static void print_page(int page, const char *bin) {
 
     p_printf("%sAndroid-specific Features:%s\n", bold, reset);
     p_printf("  --enable-android-storage  Mounts /storage/emulated/0\n");
-    p_printf("  --termux-x11              Setups Termux:X11 socket\n\n");
+    p_printf("  --termux-x11              Setups Termux:X11 socket\n");
+    p_printf("  --wayland                 Setups Wayland display bridge (Snapdragon)\n\n");
 
     p_printf("%sSystem Integration:%s\n", bold, reset);
     p_printf("  --selinux-permissive      Set host SELinux to permissive\n");

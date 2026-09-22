@@ -63,6 +63,21 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        ndk {
+            abiFilters.addAll(listOf("arm64-v8a"))
+        }
+        externalNativeBuild {
+            cmake {
+                cFlags.addAll(listOf("-O3", "-fvisibility=hidden", "-Wall"))
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/jni/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     signingConfigs {
