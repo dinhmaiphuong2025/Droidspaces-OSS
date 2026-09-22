@@ -35,6 +35,7 @@ struct render_state {
     int screen_w;
     int screen_h;
     uint32_t refresh_mhz;
+    uint32_t presented_frame_count;
 
     int buf_count;
     int dmabuf_fds[MAX_BUFS];
@@ -51,7 +52,18 @@ static bool api_loaded = false;
 static int collect_buffers(struct render_state *s)
 {
     ANativeWindow *win = s->window;
-    int target = BUFFER_COUNT;
+    int min_undequeued = 0;
+    if (api.query) {
+        api.query(win, ANATIVEWINDOW_QUERY_MIN_UNDEQUEUED_BUFFERS, &min_undequeued);
+    }
+    int target = min_undequeued + 2;
+    if (target < 4) target = 4;
+    if (target > MAX_BUFS) target = MAX_BUFS;
+
+    if (api.setBufferCount) {
+        api.setBufferCount(win, (size_t)target);
+    }
+
     int found = 0;
     int queued = 0;
 
@@ -182,8 +194,16 @@ static void *render_loop(void *arg)
         if (api.dequeueBuffer(s->window, &anb, &fence) != 0 || !anb) {
             if (fence >= 0)
                 close(fence);
-            usleep(16000);
+            usleep(8000);
             continue;
+        }
+
+        /* CPU-wait acquire fence so SurfaceFlinger finishes reading before Niri overwrites */
+        if (fence >= 0) {
+            struct pollfd fpfd = { .fd = fence, .events = POLLIN, .revents = 0 };
+            poll(&fpfd, 1, 1000);
+            close(fence);
+            fence = -1;
         }
 
         int idx = -1;
@@ -195,13 +215,29 @@ static void *render_loop(void *arg)
         }
 
         if (idx < 0) {
-            api.cancelBuffer(s->window, anb, fence);
-            usleep(16000);
+            api.cancelBuffer(s->window, anb, -1);
+            usleep(8000);
             continue;
         }
 
+        /* Send presentation feedback to producer */
+        pthread_mutex_lock(&s->lock);
+        if (s->ctx) {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            struct InputEvent pev;
+            memset(&pev, 0, sizeof(pev));
+            pev.type = INPUT_TYPE_PRESENTED;
+            pev.presented.buffer_index = (uint32_t)idx;
+            pev.presented.frame_seq = s->presented_frame_count++;
+            pev.presented.tv_sec = (uint32_t)ts.tv_sec;
+            pev.presented.tv_nsec = (uint32_t)ts.tv_nsec;
+            push_input_event(s->ctx, &pev);
+        }
+        pthread_mutex_unlock(&s->lock);
+
         if (select_dmabuf(s->ctx, idx) < 0) {
-            api.cancelBuffer(s->window, anb, fence);
+            api.cancelBuffer(s->window, anb, -1);
             pthread_mutex_lock(&s->lock);
             display_ctx *old_ctx = s->ctx;
             s->ctx = NULL;
@@ -210,9 +246,6 @@ static void *render_loop(void *arg)
             usleep(50000);
             continue;
         }
-
-        if (fence >= 0)
-            close(fence);
 
         int rfence = -1;
         int status = refresh_done_status(s->ctx, &rfence);
@@ -400,6 +433,20 @@ Java_com_droidspaces_app_ui_wayland_WaylandNative_nativeSendTouch(
     ev.touch.pointer_id = pointerId;
     ev.touch.x = x;
     ev.touch.y = y;
+
+    safe_send_input(&ev);
+}
+
+JNIEXPORT void JNICALL
+Java_com_droidspaces_app_ui_wayland_WaylandNative_nativeSendTouchFrame(
+    JNIEnv *env, jclass clazz)
+{
+    (void)env;
+    (void)clazz;
+
+    struct InputEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = INPUT_TYPE_TOUCH_FRAME;
 
     safe_send_input(&ev);
 }

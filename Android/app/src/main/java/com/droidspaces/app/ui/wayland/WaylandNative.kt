@@ -26,6 +26,8 @@ object WaylandNative {
 
     external fun nativeSendTouch(action: Int, pointerId: Int, x: Float, y: Float)
 
+    external fun nativeSendTouchFrame()
+
     external fun nativeSendKey(keyCode: Int, action: Int)
 
     external fun nativeSendPointerMotion(x: Float, y: Float, dx: Float, dy: Float)

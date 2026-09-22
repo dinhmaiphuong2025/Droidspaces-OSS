@@ -86,6 +86,7 @@ static inline int anw_api_disconnect(ANativeWindow *w, int api)
 
 typedef int (*pfn_ANativeWindow_setBufferCount)(ANativeWindow *, size_t);
 typedef int (*pfn_ANativeWindow_setUsage)(ANativeWindow *, uint64_t);
+typedef int (*pfn_ANativeWindow_query)(const ANativeWindow *, int, int *);
 
 struct anw_api {
     int (*dequeueBuffer)(ANativeWindow *, ANativeWindowBuffer **, int *);
@@ -93,16 +94,21 @@ struct anw_api {
     int (*cancelBuffer)(ANativeWindow *, ANativeWindowBuffer *, int);
     pfn_ANativeWindow_setBufferCount setBufferCount;
     pfn_ANativeWindow_setUsage setUsage;
+    pfn_ANativeWindow_query query;
 };
 
 static inline bool load_anw_api(struct anw_api *out)
 {
-    void *lib = dlopen("libandroid.so", RTLD_NOW | RTLD_GLOBAL);
+    void *lib = dlopen("libnativewindow.so", RTLD_NOW);
+    if (!lib) {
+        lib = dlopen("libandroid.so", RTLD_NOW | RTLD_GLOBAL);
+    }
     if (!lib)
         return false;
 
     out->setBufferCount = (pfn_ANativeWindow_setBufferCount)dlsym(lib, "ANativeWindow_setBufferCount");
     out->setUsage = (pfn_ANativeWindow_setUsage)dlsym(lib, "ANativeWindow_setUsage");
+    out->query = (pfn_ANativeWindow_query)dlsym(lib, "ANativeWindow_query");
 
     out->dequeueBuffer = NULL;
     out->queueBuffer = NULL;
