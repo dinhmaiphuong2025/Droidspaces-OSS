@@ -23,6 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <android/hardware_buffer.h>
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
@@ -36,15 +37,14 @@
 /* Global state                                                       */
 /* ------------------------------------------------------------------ */
 
-#define BUF_COUNT 3 /* triple buffering */
+#define MAX_BUFS 8 /* maximum buffers we track */
 
 struct render_state {
   struct anw_priv anw;
   ds_wl_ctx *consumer;
 
-  struct anw_buffer *buffers[BUF_COUNT];
-  int fence_fds[BUF_COUNT];
-  int buf_fds[BUF_COUNT]; /* dma-buf fds extracted from handles */
+  struct anw_buffer *buf_anb[MAX_BUFS]; /* cached ANB pointers */
+  int buf_fds[MAX_BUFS]; /* dup'd dma-buf fds extracted from handles */
   int buf_count;
 
   pthread_t thread;
@@ -68,40 +68,82 @@ static int buf_get_fd(struct anw_buffer *buf) {
   return buf->handle->data[0]; /* first fd in the handle */
 }
 
-/* Dequeue all buffers from ANativeWindow and extract their fds */
-static int collect_buffers(struct render_state *rs) {
-  for (int i = 0; i < BUF_COUNT; i++) {
+/* Dequeue/queue buffers to discover unique slots and dup their fds.
+ * BufferQueue requires minUndequeuedBuffers to stay queued, so we
+ * dequeue one at a time, grab the fd, then queue it back to rotate. */
+static int collect_buffers(struct render_state *rs, int target) {
+  int found = 0;
+  int queued = 0;
+
+  for (int attempt = 0; attempt < target * 4 && found < target; attempt++) {
+    struct anw_buffer *anb = NULL;
     int fence = -1;
-    int err = anw_dequeue(&rs->anw, &rs->buffers[i], &fence);
-    if (err != 0) {
-      LOGE("dequeueBuffer[%d] failed: %d", i, err);
-      /* Cancel already-dequeued buffers */
-      for (int j = 0; j < i; j++)
-        anw_cancel(&rs->anw, rs->buffers[j], -1);
-      return -1;
+    if (anw_dequeue(&rs->anw, &anb, &fence) != 0 || !anb) {
+      if (fence >= 0)
+        close(fence);
+      break;
     }
-    rs->fence_fds[i] = fence;
-    rs->buf_fds[i] = buf_get_fd(rs->buffers[i]);
-    if (rs->buf_fds[i] < 0) {
-      LOGE("buffer[%d] has no fd in handle", i);
-      for (int j = 0; j <= i; j++)
-        anw_cancel(&rs->anw, rs->buffers[j], -1);
-      return -1;
-    }
-  }
-  rs->buf_count = BUF_COUNT;
+    if (fence >= 0)
+      close(fence);
 
-  /* Cancel all buffers back so we can re-dequeue them one at a time
-   * during the render loop */
-  for (int i = 0; i < BUF_COUNT; i++) {
-    if (rs->fence_fds[i] >= 0) {
-      close(rs->fence_fds[i]);
-      rs->fence_fds[i] = -1;
+    if (!anb->handle || anb->handle->num_fds < 1) {
+      anw_cancel(&rs->anw, anb, -1);
+      continue;
     }
-    anw_cancel(&rs->anw, rs->buffers[i], -1);
-    rs->buffers[i] = NULL;
+
+    /* Check for duplicate (same ANB pointer = same slot) */
+    int is_dup = 0;
+    for (int i = 0; i < found; i++) {
+      if (rs->buf_anb[i] == anb) {
+        is_dup = 1;
+        break;
+      }
+    }
+
+    /* Queue it back so BufferQueue rotates to another slot */
+    anw_queue(&rs->anw, anb, -1);
+    queued++;
+
+    if (is_dup)
+      continue;
+
+    int raw_fd = anb->handle->data[0];
+    int dup_fd = dup(raw_fd);
+    if (dup_fd < 0)
+      continue;
+
+    rs->buf_anb[found] = anb;
+    rs->buf_fds[found] = dup_fd;
+    LOGI("  buf[%d]: anb=%p fd=%d dup=%d %dx%d stride=%d", found, (void *)anb,
+         raw_fd, dup_fd, anb->width, anb->height, anb->stride);
+    found++;
   }
 
+  /* Drain the queued buffers back to free state */
+  for (int i = 0; i < queued; i++) {
+    struct anw_buffer *danb = NULL;
+    int dfence = -1;
+    if (anw_dequeue(&rs->anw, &danb, &dfence) != 0 || !danb) {
+      if (dfence >= 0)
+        close(dfence);
+      break;
+    }
+    if (dfence >= 0)
+      close(dfence);
+    anw_cancel(&rs->anw, danb, -1);
+  }
+
+  if (found < 2) {
+    LOGE("failed to collect enough buffers: got %d (need >= 2)", found);
+    for (int i = 0; i < found; i++) {
+      close(rs->buf_fds[i]);
+      rs->buf_fds[i] = -1;
+    }
+    return -1;
+  }
+
+  rs->buf_count = found;
+  LOGI("collected %d unique DMA-BUF buffers", found);
   return 0;
 }
 
@@ -196,6 +238,10 @@ JNIEXPORT jboolean JNICALL JNI_PREFIX(nativeSetSurface)(
     ds_wl_disconnect(g_state->consumer);
     anw_disconnect(&g_state->anw);
     ANativeWindow_release(g_state->anw.win);
+    for (int i = 0; i < g_state->buf_count; i++) {
+      if (g_state->buf_fds[i] >= 0)
+        close(g_state->buf_fds[i]);
+    }
     free(g_state);
     g_state = NULL;
   }
@@ -227,10 +273,19 @@ JNIEXPORT jboolean JNICALL JNI_PREFIX(nativeSetSurface)(
   ANativeWindow_setBuffersGeometry(rs->anw.win, width, height,
                                    AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM);
   anw_connect(&rs->anw);
-  anw_set_buffer_count(&rs->anw, BUF_COUNT);
+
+  /* Query minUndequeuedBuffers to size the pool correctly */
+  int min_undequeued = 0;
+  anw_query(&rs->anw, ANW_QUERY_MIN_UNDEQUEUED_BUFFERS, &min_undequeued);
+  int target = min_undequeued + 2;
+  if (target < 4)
+    target = 4;
+  if (target > MAX_BUFS)
+    target = MAX_BUFS;
+  anw_set_buffer_count(&rs->anw, target);
 
   /* Collect buffer fds */
-  if (collect_buffers(rs) < 0) {
+  if (collect_buffers(rs, target) < 0) {
     LOGE("failed to collect buffers");
     anw_disconnect(&rs->anw);
     ANativeWindow_release(rs->anw.win);
@@ -254,6 +309,10 @@ JNIEXPORT jboolean JNICALL JNI_PREFIX(nativeSetSurface)(
 
   if (con_err < 0) {
     LOGE("ds_wl_connect failed");
+    for (int i = 0; i < rs->buf_count; i++) {
+      if (rs->buf_fds[i] >= 0)
+        close(rs->buf_fds[i]);
+    }
     anw_disconnect(&rs->anw);
     ANativeWindow_release(rs->anw.win);
     free(rs);
@@ -296,6 +355,12 @@ JNIEXPORT void JNICALL JNI_PREFIX(nativeDestroySurface)(
   ds_wl_disconnect(g_state->consumer);
   anw_disconnect(&g_state->anw);
   ANativeWindow_release(g_state->anw.win);
+  for (int i = 0; i < g_state->buf_count; i++) {
+    if (g_state->buf_fds[i] >= 0) {
+      close(g_state->buf_fds[i]);
+      g_state->buf_fds[i] = -1;
+    }
+  }
   free(g_state);
   g_state = NULL;
   pthread_mutex_unlock(&g_lock);

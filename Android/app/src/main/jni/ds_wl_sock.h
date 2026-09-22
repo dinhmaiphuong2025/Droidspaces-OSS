@@ -10,6 +10,9 @@
 #ifndef DS_WL_SOCK_H
 #define DS_WL_SOCK_H
 
+#include <stddef.h>
+#include <sys/types.h>
+
 #include "ds_wl_proto.h"
 
 /* Connect to an AF_UNIX stream socket at `path`.
