@@ -1,367 +1,455 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2024 Droidspaces contributors
+
 /*
- * Droidspaces v6 - Wayland Display Bridge Daemon and Socket Manager
+ * Wayland Display Bridge Broker (clean-room rewrite)
  *
- * Manages the embedded Wayland rendezvous broker on Android, passing DMA-BUF
- * descriptors and synchronization fences between the Android display consumer
- * and container Wayland compositors (such as Niri on Qualcomm Adreno).
+ * Sits between the app-side consumer (which owns ANativeWindow buffers)
+ * and the container-side producer (Niri via Anland backend).  Forwards
+ * DMA-BUF file descriptors and display metadata over an AF_UNIX socket
+ * using SCM_RIGHTS.
  *
- * Copyright (C) 2026 ravindu644 <droidcasts@protonmail.com>
- * SPDX-License-Identifier: GPL-3.0-or-later
+ * Protocol tag namespace: DS_WL_TAG_*
+ * See PLAN.md for the full design.
  */
 
 #include "droidspace.h"
+
 #include <sys/epoll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
-#define DS_CTRL_CONSUMER_HELLO 1
-#define DS_CTRL_PRODUCER_HELLO 2
-#define DS_CTRL_SCREEN_INFO    7
-#define DS_CTRL_REJECT         8
-#define DS_CTRL_PICKUP_FDS     9
-#define DS_CTRL_FDS_READY      10
+/* ------------------------------------------------------------------ */
+/* Wire protocol                                                      */
+/* ------------------------------------------------------------------ */
 
-#define MAX_DEPOSITED_FDS 8
-
-struct ds_ctrl_msg {
-  uint32_t type;
-  uint32_t size;
+struct ds_wl_hdr {
+  uint32_t tag;
+  uint32_t len; /* payload bytes after header (0 if none) */
 } __attribute__((packed));
 
-struct ds_screen_info {
+#define DS_WL_TAG_ATTACH  0x4100 /* consumer -> broker: fd array + info */
+#define DS_WL_TAG_READY   0x4200 /* broker -> producer: fd array ready  */
+#define DS_WL_TAG_BIND    0x4300 /* producer -> broker: register        */
+#define DS_WL_TAG_DISPLAY 0x4400 /* display metadata passthrough        */
+
+struct ds_wl_display_info {
   uint32_t width;
   uint32_t height;
   uint32_t format;
-  uint32_t refresh;
+  uint32_t refresh_mhz;
 } __attribute__((packed));
 
-static int send_ctrl(int fd, uint32_t type) {
-  struct ds_ctrl_msg msg = {.type = type, .size = 0};
-  ssize_t n = send(fd, &msg, sizeof(msg), MSG_NOSIGNAL);
-  return (n == (ssize_t)sizeof(msg)) ? 0 : -1;
-}
+#define DS_WL_MAX_FDS 16 /* enough for triple-buffer + side channels */
+#define DS_WL_TAG     "[Wayland]"
 
-static int send_screen(int fd, const struct ds_screen_info *info) {
-  struct ds_ctrl_msg hdr = {.type = DS_CTRL_SCREEN_INFO,
-                            .size = (uint32_t)sizeof(*info)};
-  uint8_t buf[sizeof(hdr) + sizeof(*info)];
-  memcpy(buf, &hdr, sizeof(hdr));
-  memcpy(buf + sizeof(hdr), info, sizeof(*info));
-  ssize_t n = send(fd, buf, sizeof(buf), MSG_NOSIGNAL);
-  return (n == (ssize_t)sizeof(buf)) ? 0 : -1;
-}
+/* ------------------------------------------------------------------ */
+/* Socket helpers: SCM_RIGHTS send/recv                               */
+/* ------------------------------------------------------------------ */
 
-static int send_deposited_fds(int sock, const int *fds, int count) {
-  struct ds_ctrl_msg hdr = {.type = DS_CTRL_FDS_READY, .size = 0};
-  struct iovec iov = {.iov_base = &hdr, .iov_len = sizeof(hdr)};
-
-  char cmsg_buf[CMSG_SPACE(sizeof(int) * MAX_DEPOSITED_FDS)];
-  memset(cmsg_buf, 0, sizeof(cmsg_buf));
-
-  struct msghdr msg = {
-      .msg_iov = &iov,
-      .msg_iovlen = 1,
-      .msg_control = cmsg_buf,
-      .msg_controllen = sizeof(cmsg_buf),
-  };
-
-  struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-  cmsg->cmsg_level = SOL_SOCKET;
-  cmsg->cmsg_type = SCM_RIGHTS;
-  cmsg->cmsg_len = CMSG_LEN(sizeof(int) * (size_t)count);
-  memcpy(CMSG_DATA(cmsg), fds, sizeof(int) * (size_t)count);
-
-  ssize_t n = sendmsg(sock, &msg, MSG_NOSIGNAL);
-  return (n == (ssize_t)sizeof(hdr)) ? 0 : -1;
-}
-
-static ssize_t recv_ctrl_with_fds(int sock, int *fds, int max_count,
-                                  int *count_out, void *data, size_t data_len) {
-  struct iovec iov = {.iov_base = data, .iov_len = data_len};
-  char cmsg_buf[CMSG_SPACE(sizeof(int) * MAX_DEPOSITED_FDS)];
-  memset(cmsg_buf, 0, sizeof(cmsg_buf));
-
-  struct msghdr msg = {
-      .msg_iov = &iov,
-      .msg_iovlen = 1,
-      .msg_control = cmsg_buf,
-      .msg_controllen = sizeof(cmsg_buf),
-  };
-
-  ssize_t n = recvmsg(sock, &msg, 0);
-  if (n <= 0)
-    return n;
-
-  *count_out = 0;
-  struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-  if (cmsg && cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
-    int count = (int)((cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int));
-    if (count > max_count)
-      count = max_count;
-    memcpy(fds, CMSG_DATA(cmsg), sizeof(int) * (size_t)count);
-    *count_out = count;
+/* Send header + optional payload, plus up to nfds file descriptors. */
+static int broker_send(int sock, struct ds_wl_hdr *hdr, void *payload,
+                       const int *fds, int nfds) {
+  struct iovec iov[2];
+  int iovcnt = 0;
+  iov[iovcnt].iov_base = hdr;
+  iov[iovcnt].iov_len = sizeof(*hdr);
+  iovcnt++;
+  if (payload && hdr->len > 0) {
+    iov[iovcnt].iov_base = payload;
+    iov[iovcnt].iov_len = hdr->len;
+    iovcnt++;
   }
 
+  char cmsgbuf[CMSG_SPACE(DS_WL_MAX_FDS * sizeof(int))];
+  struct msghdr msg = {0};
+  msg.msg_iov = iov;
+  msg.msg_iovlen = (size_t)iovcnt;
+
+  if (fds && nfds > 0) {
+    memset(cmsgbuf, 0, sizeof(cmsgbuf));
+    msg.msg_control = cmsgbuf;
+    msg.msg_controllen = CMSG_SPACE((size_t)nfds * sizeof(int));
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN((size_t)nfds * sizeof(int));
+    memcpy(CMSG_DATA(cmsg), fds, (size_t)nfds * sizeof(int));
+  }
+
+  ssize_t n = sendmsg(sock, &msg, MSG_NOSIGNAL);
+  return n >= 0 ? 0 : -1;
+}
+
+/* Receive header + payload buffer, extracting any SCM_RIGHTS fds.
+ * Returns bytes read (>= sizeof(hdr)), 0 on EOF, -1 on error. */
+static ssize_t broker_recv(int sock, struct ds_wl_hdr *hdr, void *payload,
+                           size_t payload_cap, int *fds_out, int *nfds_out) {
+  struct iovec iov[2];
+  int iovcnt = 0;
+  iov[iovcnt].iov_base = hdr;
+  iov[iovcnt].iov_len = sizeof(*hdr);
+  iovcnt++;
+  if (payload && payload_cap > 0) {
+    iov[iovcnt].iov_base = payload;
+    iov[iovcnt].iov_len = payload_cap;
+    iovcnt++;
+  }
+
+  char cmsgbuf[CMSG_SPACE(DS_WL_MAX_FDS * sizeof(int))];
+  struct msghdr msg = {0};
+  msg.msg_iov = iov;
+  msg.msg_iovlen = (size_t)iovcnt;
+  msg.msg_control = cmsgbuf;
+  msg.msg_controllen = sizeof(cmsgbuf);
+
+  ssize_t n = recvmsg(sock, &msg, 0);
+  if (n <= 0) {
+    if (nfds_out)
+      *nfds_out = 0;
+    return n;
+  }
+
+  /* Extract file descriptors from ancillary data */
+  int count = 0;
+  for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg;
+       cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+    if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+      int got = (int)((cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int));
+      if (fds_out) {
+        int take = got < (DS_WL_MAX_FDS - count) ? got : (DS_WL_MAX_FDS - count);
+        memcpy(fds_out + count, CMSG_DATA(cmsg), (size_t)take * sizeof(int));
+        count += take;
+        /* Close any excess fds we cannot store */
+        for (int i = take; i < got; i++)
+          close(((int *)CMSG_DATA(cmsg))[i]);
+      } else {
+        /* Caller doesn't want fds, close them all */
+        for (int i = 0; i < got; i++)
+          close(((int *)CMSG_DATA(cmsg))[i]);
+      }
+    }
+  }
+  if (nfds_out)
+    *nfds_out = count;
   return n;
 }
 
-static void wayland_broker_child_wrapper(int ready_fd, void *user_data) {
-  (void)user_data;
+/* ------------------------------------------------------------------ */
+/* Broker state                                                       */
+/* ------------------------------------------------------------------ */
 
-  ds_daemon_child_preamble();
-  ds_selinux_enter_domain();
+struct broker_state {
+  int listen_fd;
+  int epoll_fd;
+  int consumer_fd; /* app side, -1 if not connected */
+  int producer_fd; /* container side, -1 if not connected */
 
-  if (mkdir_p(DS_WAYLAND_SOCK_DIR, 0777) < 0) {
-    if (write(ready_fd, "\x01", 1) < 0) { /* ignore */
-    }
-    _exit(1);
+  /* Cached buffer fds from most recent ATTACH */
+  int buf_fds[DS_WL_MAX_FDS];
+  int buf_nfds;
+  struct ds_wl_display_info disp;
+  int has_attach; /* true after first ATTACH received */
+};
+
+static void broker_state_init(struct broker_state *bs) {
+  memset(bs, 0, sizeof(*bs));
+  bs->listen_fd = -1;
+  bs->epoll_fd = -1;
+  bs->consumer_fd = -1;
+  bs->producer_fd = -1;
+}
+
+static void broker_close_peer(struct broker_state *bs, int *fd_ptr) {
+  if (*fd_ptr >= 0) {
+    epoll_ctl(bs->epoll_fd, EPOLL_CTL_DEL, *fd_ptr, NULL);
+    close(*fd_ptr);
+    *fd_ptr = -1;
   }
-  chmod(DS_WAYLAND_SOCK_DIR, 0777);
-  unlink(DS_WAYLAND_HOST_BRIDGE);
+}
 
-  int listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (listen_fd < 0) {
-    if (write(ready_fd, "\x01", 1) < 0) { /* ignore */
-    }
-    _exit(1);
+static void broker_close_bufs(struct broker_state *bs) {
+  for (int i = 0; i < bs->buf_nfds; i++)
+    close(bs->buf_fds[i]);
+  bs->buf_nfds = 0;
+  bs->has_attach = 0;
+}
+
+/* Forward cached fds + display info to producer */
+static int broker_forward_to_producer(struct broker_state *bs) {
+  if (bs->producer_fd < 0 || !bs->has_attach)
+    return 0; /* nothing to forward yet */
+
+  /* Send display info first */
+  struct ds_wl_hdr disp_hdr = {DS_WL_TAG_DISPLAY, sizeof(bs->disp)};
+  if (broker_send(bs->producer_fd, &disp_hdr, &bs->disp, NULL, 0) < 0) {
+    ds_warn("%s failed to forward display info", DS_WL_TAG);
+    return -1;
   }
 
-  struct sockaddr_un addr;
-  memset(&addr, 0, sizeof(addr));
+  /* Send READY with buffer fds */
+  struct ds_wl_hdr rdy_hdr = {DS_WL_TAG_READY, 0};
+  if (broker_send(bs->producer_fd, &rdy_hdr, NULL, bs->buf_fds, bs->buf_nfds) <
+      0) {
+    ds_warn("%s failed to forward buffer fds", DS_WL_TAG);
+    return -1;
+  }
+
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Main broker loop                                                   */
+/* ------------------------------------------------------------------ */
+
+static volatile sig_atomic_t broker_running = 1;
+
+static void broker_sigterm(int sig) {
+  (void)sig;
+  broker_running = 0;
+}
+
+static void broker_loop(const char *sock_path) {
+  struct broker_state bs;
+  broker_state_init(&bs);
+
+  /* Create AF_UNIX listen socket */
+  unlink(sock_path);
+  bs.listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (bs.listen_fd < 0) {
+    ds_error("%s socket: %s", DS_WL_TAG, strerror(errno));
+    return;
+  }
+
+  struct sockaddr_un addr = {0};
   addr.sun_family = AF_UNIX;
-  safe_strncpy(addr.sun_path, DS_WAYLAND_HOST_BRIDGE, sizeof(addr.sun_path));
+  strncpy(addr.sun_path, sock_path, sizeof(addr.sun_path) - 1);
 
-  if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    close(listen_fd);
-    if (write(ready_fd, "\x01", 1) < 0) { /* ignore */
-    }
-    _exit(1);
+  if (bind(bs.listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    ds_error("%s bind(%s): %s", DS_WL_TAG, sock_path, strerror(errno));
+    close(bs.listen_fd);
+    return;
   }
-  chmod(DS_WAYLAND_HOST_BRIDGE, 0666);
+  chmod(sock_path, 0666);
 
-  if (listen(listen_fd, 4) < 0) {
-    close(listen_fd);
-    unlink(DS_WAYLAND_HOST_BRIDGE);
-    if (write(ready_fd, "\x01", 1) < 0) { /* ignore */
-    }
-    _exit(1);
+  if (listen(bs.listen_fd, 2) < 0) {
+    ds_error("%s listen: %s", DS_WL_TAG, strerror(errno));
+    close(bs.listen_fd);
+    unlink(sock_path);
+    return;
   }
 
-  /* Signal parent that socket is ready and listening */
-  close(ready_fd);
-
-  int epoll_fd = epoll_create1(EPOLL_CLOEXEC);
-  if (epoll_fd < 0) {
-    close(listen_fd);
-    unlink(DS_WAYLAND_HOST_BRIDGE);
-    _exit(1);
+  bs.epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+  if (bs.epoll_fd < 0) {
+    ds_error("%s epoll_create1: %s", DS_WL_TAG, strerror(errno));
+    close(bs.listen_fd);
+    unlink(sock_path);
+    return;
   }
 
-  struct epoll_event ev;
-  memset(&ev, 0, sizeof(ev));
-  ev.events = EPOLLIN;
-  ev.data.fd = listen_fd;
-  epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_fd, &ev);
+  struct epoll_event ev = {.events = EPOLLIN, .data.fd = bs.listen_fd};
+  epoll_ctl(bs.epoll_fd, EPOLL_CTL_ADD, bs.listen_fd, &ev);
 
-  int consumer_fd = -1;
-  int producer_fd = -1;
-  int deposited_fds[MAX_DEPOSITED_FDS];
-  int deposited_count = 0;
-  struct ds_screen_info screen_info;
-  int has_screen = 0;
-  int producer_waiting_screen = 0;
-  int producer_waiting_fds = 0;
+  signal(SIGTERM, broker_sigterm);
+  signal(SIGINT, broker_sigterm);
 
-  struct epoll_event events[16];
-  while (1) {
-    int n = epoll_wait(epoll_fd, events, 16, -1);
-    if (n < 0) {
+  ds_log("%s broker listening on %s", DS_WL_TAG, sock_path);
+
+  struct epoll_event events[4];
+  while (broker_running) {
+    int nev = epoll_wait(bs.epoll_fd, events, 4, 1000);
+    if (nev < 0) {
       if (errno == EINTR)
         continue;
       break;
     }
 
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < nev; i++) {
       int fd = events[i].data.fd;
 
-      if (fd == listen_fd) {
-        int client = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
-        if (client >= 0) {
-          struct epoll_event cev = {
-              .events = EPOLLIN | EPOLLHUP | EPOLLERR,
-              .data.fd = client,
-          };
-          epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client, &cev);
-        }
-        continue;
-      }
+      /* New connection */
+      if (fd == bs.listen_fd) {
+        int client = accept4(bs.listen_fd, NULL, NULL, SOCK_CLOEXEC);
+        if (client < 0)
+          continue;
 
-      if (events[i].events & (EPOLLHUP | EPOLLERR)) {
-        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-        if (fd == consumer_fd) {
-          consumer_fd = -1;
-          for (int k = 0; k < deposited_count; k++)
-            close(deposited_fds[k]);
-          deposited_count = 0;
-        } else if (fd == producer_fd) {
-          producer_fd = -1;
-          producer_waiting_screen = 0;
-          producer_waiting_fds = 0;
-        }
-        close(fd);
-        continue;
-      }
-
-      if (events[i].events & EPOLLIN) {
-        struct ds_ctrl_msg hdr;
-        int in_fds[MAX_DEPOSITED_FDS];
-        int in_fd_count = 0;
-        ssize_t r = recv_ctrl_with_fds(fd, in_fds, MAX_DEPOSITED_FDS,
-                                       &in_fd_count, &hdr, sizeof(hdr));
+        /* Read the initial message to identify consumer vs producer */
+        struct ds_wl_hdr hdr;
+        struct ds_wl_display_info info;
+        int fds[DS_WL_MAX_FDS];
+        int nfds = 0;
+        ssize_t r =
+            broker_recv(client, &hdr, &info, sizeof(info), fds, &nfds);
         if (r <= 0) {
-          epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-          if (fd == consumer_fd) {
-            consumer_fd = -1;
-            for (int k = 0; k < deposited_count; k++)
-              close(deposited_fds[k]);
-            deposited_count = 0;
-          } else if (fd == producer_fd) {
-            producer_fd = -1;
-            producer_waiting_screen = 0;
-            producer_waiting_fds = 0;
-          }
-          close(fd);
+          close(client);
           continue;
         }
 
-        if (hdr.type == DS_CTRL_CONSUMER_HELLO) {
-          consumer_fd = fd;
-          for (int k = 0; k < deposited_count; k++)
-            close(deposited_fds[k]);
-          deposited_count = in_fd_count;
-          for (int k = 0; k < in_fd_count; k++)
-            deposited_fds[k] = in_fds[k];
+        if (hdr.tag == DS_WL_TAG_ATTACH) {
+          /* Consumer connecting with buffer fds */
+          broker_close_peer(&bs, &bs.consumer_fd);
+          broker_close_bufs(&bs);
+          bs.consumer_fd = client;
+          memcpy(bs.buf_fds, fds, (size_t)nfds * sizeof(int));
+          bs.buf_nfds = nfds;
+          if (hdr.len >= sizeof(info))
+            bs.disp = info;
+          bs.has_attach = 1;
+          ev.events = EPOLLIN;
+          ev.data.fd = client;
+          epoll_ctl(bs.epoll_fd, EPOLL_CTL_ADD, client, &ev);
+          ds_log("%s consumer connected (%d fds, %ux%u)", DS_WL_TAG, nfds,
+                 bs.disp.width, bs.disp.height);
+          broker_forward_to_producer(&bs);
 
-          if (producer_fd >= 0 && producer_waiting_fds &&
-              deposited_count >= 5) {
-            send_deposited_fds(producer_fd, deposited_fds, deposited_count);
-            for (int k = 0; k < deposited_count; k++)
-              close(deposited_fds[k]);
-            deposited_count = 0;
-            producer_waiting_fds = 0;
-            send_ctrl(consumer_fd, DS_CTRL_FDS_READY);
-          }
-        } else if (hdr.type == DS_CTRL_PRODUCER_HELLO) {
-          producer_fd = fd;
-          producer_waiting_screen = 0;
-          producer_waiting_fds = 0;
-          if (has_screen) {
-            send_screen(producer_fd, &screen_info);
-          } else {
-            producer_waiting_screen = 1;
-          }
-        } else if (hdr.type == DS_CTRL_SCREEN_INFO) {
-          if (hdr.size == sizeof(struct ds_screen_info)) {
-            if (read(fd, &screen_info, sizeof(screen_info)) ==
-                (ssize_t)sizeof(screen_info)) {
-              has_screen = 1;
-              if (producer_fd >= 0 && producer_waiting_screen) {
-                send_screen(producer_fd, &screen_info);
-                producer_waiting_screen = 0;
-              }
-            }
-          }
-        } else if (hdr.type == DS_CTRL_PICKUP_FDS) {
-          if (deposited_count >= 5 && producer_fd >= 0) {
-            send_deposited_fds(producer_fd, deposited_fds, deposited_count);
-            for (int k = 0; k < deposited_count; k++)
-              close(deposited_fds[k]);
-            deposited_count = 0;
-            producer_waiting_fds = 0;
-            if (consumer_fd >= 0)
-              send_ctrl(consumer_fd, DS_CTRL_FDS_READY);
-          } else {
-            producer_waiting_fds = 1;
-          }
+        } else if (hdr.tag == DS_WL_TAG_BIND) {
+          /* Producer registering */
+          broker_close_peer(&bs, &bs.producer_fd);
+          /* Close any fds that came with BIND (shouldn't have any) */
+          for (int j = 0; j < nfds; j++)
+            close(fds[j]);
+          bs.producer_fd = client;
+          ev.events = EPOLLIN;
+          ev.data.fd = client;
+          epoll_ctl(bs.epoll_fd, EPOLL_CTL_ADD, client, &ev);
+          ds_log("%s producer connected", DS_WL_TAG);
+          broker_forward_to_producer(&bs);
+
+        } else {
+          /* Unknown first message, reject */
+          for (int j = 0; j < nfds; j++)
+            close(fds[j]);
+          close(client);
         }
+        continue;
+      }
+
+      /* Peer event (data or hangup) */
+      if (events[i].events & (EPOLLHUP | EPOLLERR)) {
+        if (fd == bs.consumer_fd) {
+          ds_log("%s consumer disconnected", DS_WL_TAG);
+          broker_close_peer(&bs, &bs.consumer_fd);
+          broker_close_bufs(&bs);
+        } else if (fd == bs.producer_fd) {
+          ds_log("%s producer disconnected", DS_WL_TAG);
+          broker_close_peer(&bs, &bs.producer_fd);
+        }
+        continue;
+      }
+
+      /* Data from connected peer: buffer rotation (ATTACH again) */
+      if (fd == bs.consumer_fd && (events[i].events & EPOLLIN)) {
+        struct ds_wl_hdr hdr;
+        struct ds_wl_display_info info;
+        int fds[DS_WL_MAX_FDS];
+        int nfds = 0;
+        ssize_t r =
+            broker_recv(fd, &hdr, &info, sizeof(info), fds, &nfds);
+        if (r <= 0) {
+          ds_log("%s consumer disconnected", DS_WL_TAG);
+          broker_close_peer(&bs, &bs.consumer_fd);
+          broker_close_bufs(&bs);
+          continue;
+        }
+        if (hdr.tag == DS_WL_TAG_ATTACH) {
+          broker_close_bufs(&bs);
+          memcpy(bs.buf_fds, fds, (size_t)nfds * sizeof(int));
+          bs.buf_nfds = nfds;
+          if (hdr.len >= sizeof(info))
+            bs.disp = info;
+          bs.has_attach = 1;
+          broker_forward_to_producer(&bs);
+        } else {
+          for (int j = 0; j < nfds; j++)
+            close(fds[j]);
+        }
+      }
+
+      /* Data from producer: currently unused but drain to avoid stall */
+      if (fd == bs.producer_fd && (events[i].events & EPOLLIN)) {
+        struct ds_wl_hdr hdr;
+        char discard[256];
+        int fds[DS_WL_MAX_FDS];
+        int nfds = 0;
+        ssize_t r =
+            broker_recv(fd, &hdr, discard, sizeof(discard), fds, &nfds);
+        if (r <= 0) {
+          ds_log("%s producer disconnected", DS_WL_TAG);
+          broker_close_peer(&bs, &bs.producer_fd);
+        }
+        for (int j = 0; j < nfds; j++)
+          close(fds[j]);
       }
     }
   }
 
-  for (int k = 0; k < deposited_count; k++)
-    close(deposited_fds[k]);
-  close(listen_fd);
-  close(epoll_fd);
-  unlink(DS_WAYLAND_HOST_BRIDGE);
+  /* Cleanup */
+  broker_close_peer(&bs, &bs.consumer_fd);
+  broker_close_peer(&bs, &bs.producer_fd);
+  broker_close_bufs(&bs);
+  close(bs.epoll_fd);
+  close(bs.listen_fd);
+  unlink(sock_path);
+  ds_log("%s broker exiting", DS_WL_TAG);
+}
+
+/* ------------------------------------------------------------------ */
+/* ds_spawn_daemon child wrapper                                      */
+/* ------------------------------------------------------------------ */
+
+static void broker_child(int ready_fd, void *user_data) {
+  (void)user_data;
+  ds_daemon_child_preamble();
+  ds_selinux_enter_domain();
+  mkdir_p(DS_WAYLAND_SOCK_DIR, 0755);
+
+  /* Signal parent that we are ready (close the pipe without writing) */
+  close(ready_fd);
+
+  broker_loop(DS_WAYLAND_HOST_BRIDGE);
   _exit(0);
 }
 
-static pid_t spawn_wayland(void) {
-  return ds_spawn_daemon(wayland_broker_child_wrapper, NULL, "wayland.log",
-                         "Wayland", "Wayland");
-}
+/* ------------------------------------------------------------------ */
+/* Public API                                                         */
+/* ------------------------------------------------------------------ */
 
 int ds_wayland_daemon_start(struct ds_config *cfg) {
-  if (!cfg || !cfg->wayland || !is_android())
+  if (!cfg || !cfg->wayland || !is_android() || getuid() != 0)
     return -1;
 
-  if (getuid() != 0) {
-    ds_error("[Wayland] not running as root");
-    return -1;
-  }
-
-  pid_t existing = ds_daemon_read_pid("wayland.wpid");
+  /* Reuse running daemon if still alive */
+  pid_t existing = ds_daemon_read_pid("wayland" DS_EXT_WPID);
   if (existing > 0) {
-    ds_log("Wayland: broker already running (PID %d)", (int)existing);
     cfg->wayland_pid = existing;
-    return 1;
-  }
-
-  unlink(DS_WAYLAND_HOST_BRIDGE);
-
-  ds_log("[Wayland] launching display broker daemon");
-  pid_t child = spawn_wayland();
-  if (child > 0) {
-    cfg->wayland_pid = child;
-    ds_daemon_write_pid("wayland.wpid", child);
+    ds_log("%s reusing running broker (pid %d)", DS_WL_TAG, (int)existing);
     return 0;
   }
-  return -1;
+
+  /* Clean stale socket */
+  unlink(DS_WAYLAND_HOST_BRIDGE);
+
+  pid_t child =
+      ds_spawn_daemon(broker_child, cfg, "wayland.log", "Wayland", DS_WL_TAG);
+  if (child < 0)
+    return -1;
+
+  ds_daemon_write_pid("wayland" DS_EXT_WPID, child);
+  cfg->wayland_pid = child;
+  return 0;
 }
 
 void ds_wayland_daemon_stop(struct ds_config *cfg) {
-  if (!cfg)
+  if (!is_android())
     return;
   ds_global_daemon_stop(check_wayland_needs, cfg->wayland_pid,
-                        &cfg->wayland_pid, "wayland.wpid",
-                        DS_WAYLAND_HOST_BRIDGE, "[Wayland]");
+                        &cfg->wayland_pid, "wayland" DS_EXT_WPID,
+                        DS_WAYLAND_HOST_BRIDGE, DS_WL_TAG);
 }
 
 int ds_setup_wayland_socket(struct ds_config *cfg) {
-  if (!is_android() || !cfg->wayland)
+  if (!cfg || !cfg->wayland || !is_android())
     return 0;
-
-  mkdir_p(DS_WAYLAND_CONTAINER_DIR, 01777);
-  chmod(DS_WAYLAND_CONTAINER_DIR, 01777);
-
-  /* Since setup_hardware_access runs after pivot_root, host root is at /.old_root */
-  const char *src = NULL;
-  if (access(DS_WAYLAND_OLDROOT_BRIDGE, F_OK) == 0) {
-    src = DS_WAYLAND_OLDROOT_BRIDGE;
-  } else if (access(DS_WAYLAND_HOST_BRIDGE, F_OK) == 0) {
-    src = DS_WAYLAND_HOST_BRIDGE;
-  } else {
-    ds_warn("Wayland: bridge socket not found at %s or %s - skipping mount",
-            DS_WAYLAND_OLDROOT_BRIDGE, DS_WAYLAND_HOST_BRIDGE);
-    return 0;
-  }
-
-  const char *dst = DS_WAYLAND_BRIDGE_SOCK;
-  if (ds_bind_mount_socket(src, dst, 0, "Wayland") < 0)
-    return -1;
-
-  if (ds_bind_mount_socket(src, "/run/display.sock", 0, "WaylandCompat") < 0) {
-    /* Optional compatibility path for anland legacy clients */
-  }
-
-  ds_log("[Wayland] bridge socket bind-mounted to %s and /run/display.sock", dst);
-  return 0;
+  return ds_bind_mount_socket(DS_WAYLAND_OLDROOT_BRIDGE, DS_WAYLAND_BRIDGE_SOCK,
+                              0, "Wayland");
 }
