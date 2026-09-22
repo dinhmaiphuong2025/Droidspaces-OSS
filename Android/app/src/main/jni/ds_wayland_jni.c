@@ -53,8 +53,9 @@ static int collect_buffers(struct render_state *s)
     ANativeWindow *win = s->window;
     int target = BUFFER_COUNT;
     int found = 0;
+    int queued = 0;
 
-    LOGI("collecting %d buffers for SurfaceView", target);
+    LOGI("collecting %d buffers for SurfaceView via dequeue/queue", target);
 
     for (int attempt = 0; attempt < target * 4 && found < target; attempt++) {
         ANativeWindowBuffer *anb = NULL;
@@ -83,24 +84,67 @@ static int collect_buffers(struct render_state *s)
             }
         }
 
-        api.cancelBuffer(win, anb, -1);
+        /* Queue the buffer back so BufferQueue rotates to another slot */
+        api.queueBuffer(win, anb, -1);
+        queued++;
 
-        if (!dup_found) {
-            s->buf_anb[found] = anb;
-            s->dmabuf_fds[found] = fd;
-            s->dmabuf_infos[found].stride = (uint32_t)anb->stride;
-            s->dmabuf_infos[found].width  = (uint32_t)anb->width;
-            s->dmabuf_infos[found].height = (uint32_t)anb->height;
-            s->dmabuf_infos[found].format = (uint32_t)anb->format;
-            s->dmabuf_infos[found].modifier = 0;
-            s->dmabuf_infos[found].offset = 0;
-            found++;
+        if (dup_found)
+            continue;
+
+        int dup_fd = dup(fd);
+        if (dup_fd < 0)
+            continue;
+
+        s->buf_anb[found] = anb;
+        s->dmabuf_fds[found] = dup_fd;
+        s->dmabuf_infos[found].stride = (uint32_t)(anb->stride * 4);
+        s->dmabuf_infos[found].width  = (uint32_t)anb->width;
+        s->dmabuf_infos[found].height = (uint32_t)anb->height;
+        s->dmabuf_infos[found].format = (uint32_t)anb->format;
+        s->dmabuf_infos[found].modifier = 0;
+        s->dmabuf_infos[found].offset = 0;
+        LOGI("  collected buf[%d]: anb=%p fd=%d dup_fd=%d %dx%d stride=%d",
+             found, (void *)anb, fd, dup_fd, anb->width, anb->height, anb->stride);
+        found++;
+    }
+
+    /* Drain the queued buffers back to free state */
+    for (int i = 0; i < queued; i++) {
+        ANativeWindowBuffer *danb = NULL;
+        int dfence = -1;
+        int rc = -1;
+        for (int retry = 0; retry < 5; retry++) {
+            rc = api.dequeueBuffer(win, &danb, &dfence);
+            if (rc == 0 && danb)
+                break;
+            if (dfence >= 0) {
+                close(dfence);
+                dfence = -1;
+            }
+            danb = NULL;
+            usleep(2000);
         }
+        if (rc != 0 || !danb)
+            break;
+        if (dfence >= 0)
+            close(dfence);
+        api.cancelBuffer(win, danb, -1);
+    }
+
+    if (found < 2) {
+        LOGE("failed to collect sufficient buffers: found %d (needed at least 2)", found);
+        for (int i = 0; i < found; i++) {
+            if (s->dmabuf_fds[i] >= 0) {
+                close(s->dmabuf_fds[i]);
+                s->dmabuf_fds[i] = -1;
+            }
+        }
+        return -1;
     }
 
     s->buf_count = found;
-    LOGI("collected %d unique DMA-BUF buffers", found);
-    return (found >= 2) ? 0 : -1;
+    LOGI("successfully collected %d unique DMA-BUF buffers", found);
+    return 0;
 }
 
 static void *render_loop(void *arg)
@@ -236,6 +280,14 @@ Java_com_droidspaces_app_ui_wayland_WaylandNative_nativeSetSurface(
         g_state.window = NULL;
     }
 
+    for (int i = 0; i < g_state.buf_count; i++) {
+        if (g_state.dmabuf_fds[i] >= 0) {
+            close(g_state.dmabuf_fds[i]);
+            g_state.dmabuf_fds[i] = -1;
+        }
+    }
+    g_state.buf_count = 0;
+
     if (!jsurface) {
         pthread_mutex_unlock(&g_state.lock);
         return JNI_TRUE;
@@ -307,6 +359,13 @@ Java_com_droidspaces_app_ui_wayland_WaylandNative_nativeDestroySurface(JNIEnv *e
         ANativeWindow_release(g_state.window);
         g_state.window = NULL;
     }
+    for (int i = 0; i < g_state.buf_count; i++) {
+        if (g_state.dmabuf_fds[i] >= 0) {
+            close(g_state.dmabuf_fds[i]);
+            g_state.dmabuf_fds[i] = -1;
+        }
+    }
+    g_state.buf_count = 0;
     pthread_mutex_unlock(&g_state.lock);
 }
 
