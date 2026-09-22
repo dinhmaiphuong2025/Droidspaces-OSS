@@ -167,6 +167,8 @@ static void wayland_broker_child_wrapper(int ready_fd, void *user_data) {
   int deposited_count = 0;
   struct ds_screen_info screen_info;
   int has_screen = 0;
+  int producer_waiting_screen = 0;
+  int producer_waiting_fds = 0;
 
   struct epoll_event events[16];
   while (1) {
@@ -201,6 +203,8 @@ static void wayland_broker_child_wrapper(int ready_fd, void *user_data) {
           deposited_count = 0;
         } else if (fd == producer_fd) {
           producer_fd = -1;
+          producer_waiting_screen = 0;
+          producer_waiting_fds = 0;
         }
         close(fd);
         continue;
@@ -221,6 +225,8 @@ static void wayland_broker_child_wrapper(int ready_fd, void *user_data) {
             deposited_count = 0;
           } else if (fd == producer_fd) {
             producer_fd = -1;
+            producer_waiting_screen = 0;
+            producer_waiting_fds = 0;
           }
           close(fd);
           continue;
@@ -234,35 +240,46 @@ static void wayland_broker_child_wrapper(int ready_fd, void *user_data) {
           for (int k = 0; k < in_fd_count; k++)
             deposited_fds[k] = in_fds[k];
 
-          if (producer_fd >= 0 && deposited_count > 0) {
-            if (has_screen)
-              send_screen(producer_fd, &screen_info);
+          if (producer_fd >= 0 && producer_waiting_fds &&
+              deposited_count >= 5) {
             send_deposited_fds(producer_fd, deposited_fds, deposited_count);
+            for (int k = 0; k < deposited_count; k++)
+              close(deposited_fds[k]);
+            deposited_count = 0;
+            producer_waiting_fds = 0;
             send_ctrl(consumer_fd, DS_CTRL_FDS_READY);
           }
         } else if (hdr.type == DS_CTRL_PRODUCER_HELLO) {
           producer_fd = fd;
-          if (has_screen)
+          producer_waiting_screen = 0;
+          producer_waiting_fds = 0;
+          if (has_screen) {
             send_screen(producer_fd, &screen_info);
-          if (deposited_count > 0) {
-            send_deposited_fds(producer_fd, deposited_fds, deposited_count);
-            if (consumer_fd >= 0)
-              send_ctrl(consumer_fd, DS_CTRL_FDS_READY);
+          } else {
+            producer_waiting_screen = 1;
           }
         } else if (hdr.type == DS_CTRL_SCREEN_INFO) {
           if (hdr.size == sizeof(struct ds_screen_info)) {
             if (read(fd, &screen_info, sizeof(screen_info)) ==
                 (ssize_t)sizeof(screen_info)) {
               has_screen = 1;
-              if (producer_fd >= 0)
+              if (producer_fd >= 0 && producer_waiting_screen) {
                 send_screen(producer_fd, &screen_info);
+                producer_waiting_screen = 0;
+              }
             }
           }
         } else if (hdr.type == DS_CTRL_PICKUP_FDS) {
-          if (deposited_count > 0) {
-            send_deposited_fds(fd, deposited_fds, deposited_count);
+          if (deposited_count >= 5 && producer_fd >= 0) {
+            send_deposited_fds(producer_fd, deposited_fds, deposited_count);
+            for (int k = 0; k < deposited_count; k++)
+              close(deposited_fds[k]);
+            deposited_count = 0;
+            producer_waiting_fds = 0;
             if (consumer_fd >= 0)
               send_ctrl(consumer_fd, DS_CTRL_FDS_READY);
+          } else {
+            producer_waiting_fds = 1;
           }
         }
       }

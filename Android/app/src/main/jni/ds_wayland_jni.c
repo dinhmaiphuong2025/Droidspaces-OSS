@@ -247,6 +247,25 @@ static void *render_loop(void *arg)
     return NULL;
 }
 
+static void stop_render_thread(void)
+{
+    pthread_t t = 0;
+    pthread_mutex_lock(&g_state.lock);
+    if (g_state.running) {
+        g_state.running = false;
+        if (g_state.ctx) {
+            wake_consumer(g_state.ctx);
+        }
+        t = g_state.render_thread;
+        g_state.render_thread = 0;
+    }
+    pthread_mutex_unlock(&g_state.lock);
+
+    if (t != 0) {
+        pthread_join(t, NULL);
+    }
+}
+
 JNIEXPORT void JNICALL
 Java_com_droidspaces_app_ui_wayland_WaylandNative_nativeInit(JNIEnv *env, jclass clazz)
 {
@@ -264,15 +283,9 @@ Java_com_droidspaces_app_ui_wayland_WaylandNative_nativeSetSurface(
     JNIEnv *env, jclass clazz, jobject jsurface, jint width, jint height, jint refreshMhz, jstring jpath)
 {
     (void)clazz;
-    pthread_mutex_lock(&g_state.lock);
+    stop_render_thread();
 
-    if (g_state.running) {
-        g_state.running = false;
-        if (g_state.ctx) {
-            wake_consumer(g_state.ctx);
-        }
-        pthread_join(g_state.render_thread, NULL);
-    }
+    pthread_mutex_lock(&g_state.lock);
 
     if (g_state.window) {
         anw_api_disconnect(g_state.window, ANW_API_CPU);
@@ -346,14 +359,9 @@ Java_com_droidspaces_app_ui_wayland_WaylandNative_nativeDestroySurface(JNIEnv *e
 {
     (void)env;
     (void)clazz;
+    stop_render_thread();
+
     pthread_mutex_lock(&g_state.lock);
-    if (g_state.running) {
-        g_state.running = false;
-        if (g_state.ctx) {
-            wake_consumer(g_state.ctx);
-        }
-        pthread_join(g_state.render_thread, NULL);
-    }
     if (g_state.window) {
         anw_api_disconnect(g_state.window, ANW_API_CPU);
         ANativeWindow_release(g_state.window);

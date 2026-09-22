@@ -100,26 +100,12 @@ fun WaylandDisplayScreen(
                 SurfaceView(ctx).apply {
                     holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
-                            val windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                            val refreshRate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                ctx.display?.refreshRate ?: 60f
-                            } else {
-                                @Suppress("DEPRECATION")
-                                windowManager.defaultDisplay.refreshRate
-                            }
-                            val refreshMhz = (refreshRate * 1000).toInt()
-
-                            val socketPath = "/data/local/tmp/ds-wayland/ds-wayland.sock"
-                            WaylandNative.nativeSetSurface(
-                                surface = holder.surface,
-                                width = width.coerceAtLeast(1),
-                                height = height.coerceAtLeast(1),
-                                refreshMhz = refreshMhz,
-                                socketPath = socketPath
-                            )
+                            // Dimensions are not yet measured in surfaceCreated.
+                            // surfaceChanged follows immediately with valid w and h.
                         }
 
                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
+                            if (w <= 0 || h <= 0) return
                             val windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
                             val refreshRate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                                 ctx.display?.refreshRate ?: 60f

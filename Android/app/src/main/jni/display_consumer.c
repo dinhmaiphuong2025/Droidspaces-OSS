@@ -24,6 +24,7 @@ struct display_ctx {
     int      buf_ready_efd;
     int      fence_fd;
     int      shm_fd;
+    int      audio_fd;
     int      wake_efd;
     volatile uint32_t *shm_ptr;
     uint32_t screen_w, screen_h;
@@ -79,7 +80,7 @@ static int create_shm(display_ctx *ctx)
 
 static int send_hello_fds(display_ctx *ctx)
 {
-    int sv[2], fv[2];
+    int sv[2], fv[2], av[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
         return -1;
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fv) < 0) {
@@ -87,15 +88,24 @@ static int send_hello_fds(display_ctx *ctx)
         close(sv[1]);
         return -1;
     }
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, av) < 0) {
+        close(sv[0]);
+        close(sv[1]);
+        close(fv[0]);
+        close(fv[1]);
+        return -1;
+    }
 
     ctx->data_fd  = sv[0];
     ctx->fence_fd = fv[0];
+    ctx->audio_fd = av[0];
 
     struct ctrl_msg hdr = { .type = CTRL_MSG_CONSUMER_HELLO, .size = 0 };
-    int fds[4] = { ctx->buf_ready_efd, fv[1], sv[1], ctx->shm_fd };
-    int ret = send_fds(ctx->ctrl_fd, &hdr, sizeof(hdr), fds, 4);
+    int fds[5] = { ctx->buf_ready_efd, fv[1], sv[1], ctx->shm_fd, av[1] };
+    int ret = send_fds(ctx->ctrl_fd, &hdr, sizeof(hdr), fds, 5);
     close(sv[1]);
     close(fv[1]);
+    close(av[1]);
     return ret;
 }
 
@@ -113,6 +123,7 @@ int connect_to_daemon(display_ctx **out_ctx, const char *socket_path)
     ctx->data_fd = -1;
     ctx->fence_fd = -1;
     ctx->shm_fd = -1;
+    ctx->audio_fd = -1;
     ctx->wake_efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     ctx->stored_count = 0;
 
@@ -144,6 +155,7 @@ int connect_to_daemon(display_ctx **out_ctx, const char *socket_path)
         close(ctx->ctrl_fd);
         if (ctx->data_fd >= 0) close(ctx->data_fd);
         if (ctx->fence_fd >= 0) close(ctx->fence_fd);
+        if (ctx->audio_fd >= 0) close(ctx->audio_fd);
         if (ctx->wake_efd >= 0) close(ctx->wake_efd);
         munmap((void *)ctx->shm_ptr, sizeof(uint32_t));
         close(ctx->shm_fd);
@@ -187,6 +199,10 @@ void disconnect_daemon(display_ctx *ctx)
     if (ctx->fence_fd >= 0) {
         close(ctx->fence_fd);
         ctx->fence_fd = -1;
+    }
+    if (ctx->audio_fd >= 0) {
+        close(ctx->audio_fd);
+        ctx->audio_fd = -1;
     }
     if (ctx->shm_ptr) {
         munmap((void *)ctx->shm_ptr, sizeof(uint32_t));
