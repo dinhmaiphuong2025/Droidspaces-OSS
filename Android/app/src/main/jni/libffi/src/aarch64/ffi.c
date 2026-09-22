@@ -551,17 +551,21 @@ ffi_prep_cif_machdep (ffi_cif *cif)
   return FFI_OK;
 }
 
-#if defined (__APPLE__)
-/* Perform Apple-specific cif processing for variadic calls */
+/* Perform aarch64-specific cif processing for variadic calls */
 ffi_status FFI_HIDDEN
 ffi_prep_cif_machdep_var(ffi_cif *cif, unsigned int nfixedargs,
 			 unsigned int ntotalargs)
 {
+#if defined (__APPLE__)
   ffi_status status = ffi_prep_cif_machdep (cif);
   cif->aarch64_nfixedargs = nfixedargs;
   return status;
+#else
+  (void)nfixedargs;
+  (void)ntotalargs;
+  return ffi_prep_cif_machdep (cif);
+#endif
 }
-#endif /* __APPLE__ */
 
 extern void ffi_call_SYSV (struct call_context *context, void *frame,
 			   void (*fn)(void), void *rvalue, int flags,
