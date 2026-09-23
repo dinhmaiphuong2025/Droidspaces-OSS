@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/mman.h>
 
 struct ds_gl_context {
   EGLDisplay display;
@@ -46,6 +47,52 @@ static void resolve_image_procs(void) {
 
 /* Import one single-plane linear dmabuf into the presentation texture.
  * Multi-plane or tiled buffers are skipped, the old frame stays up. */
+static void upload_dmabuf_mmap_fallback(struct ds_buffer *buf);
+/* Last resort when EGLImage import fails: map the dma-buf on CPU and
+ * upload like SHM. Works for system-memory buffers, not GPU-private ones. */
+static void upload_dmabuf_mmap_fallback(struct ds_buffer *buf) {
+  if (!buf || buf->dmabuf_num_planes != 1 || buf->dmabuf_fds[0] < 0) return;
+  if (buf->width <= 0 || buf->height <= 0) return;
+  if (buf->format != DRM_FORMAT_ARGB8888 && buf->format != DRM_FORMAT_XRGB8888) {
+    return;
+  }
+
+  size_t stride = buf->dmabuf_strides[0];
+  size_t need = stride * (size_t)buf->height + buf->dmabuf_offsets[0];
+  if (stride < (size_t)buf->width * 4) return;
+
+  void *map = mmap(NULL, need, PROT_READ, MAP_SHARED, buf->dmabuf_fds[0], 0);
+  if (map == MAP_FAILED) {
+    DS_LOGE("dmabuf mmap failed, giving up on this buffer");
+    return;
+  }
+
+  uint8_t *data = (uint8_t *)map + buf->dmabuf_offsets[0];
+  glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
+  if (stride == (size_t)buf->width * 4) {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
+                 GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
+  } else {
+    size_t row = (size_t)buf->width * 4;
+    uint8_t *tight = malloc(row * (size_t)buf->height);
+    if (tight) {
+      for (int y = 0; y < buf->height; y++) {
+        memcpy(tight + (size_t)y * row, data + (size_t)y * stride, row);
+      }
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
+                   GL_BGRA_EXT, GL_UNSIGNED_BYTE, tight);
+      free(tight);
+    }
+  }
+  munmap(map, need);
+  log_gl_error("upload_dmabuf_mmap");
+
+  if (!g_first_frame_logged) {
+    g_first_frame_logged = 1;
+    DS_LOGI("presented first dmabuf frame via mmap (%dx%d)", buf->width, buf->height);
+  }
+}
+
 static void upload_dmabuf_buffer(struct ds_buffer *buf) {
   if (!buf || buf->dmabuf_num_planes != 1 || buf->dmabuf_fds[0] < 0) return;
   if (buf->width <= 0 || buf->height <= 0) return;
@@ -76,6 +123,7 @@ static void upload_dmabuf_buffer(struct ds_buffer *buf) {
                                        EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
   if (img == EGL_NO_IMAGE_KHR) {
     DS_LOGE("eglCreateImage failed: 0x%x", eglGetError());
+    upload_dmabuf_mmap_fallback(buf);
     return;
   }
 
