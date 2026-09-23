@@ -50,12 +50,13 @@ val dsVersionCodeVal = dsVersionName.split(".").let { parts ->
 
 android {
     namespace = "com.droidspaces.app"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.droidspaces.app"
         minSdk = 26
         targetSdk = 34
+        ndkVersion = "29.0.14206865"
         versionCode = dsVersionCodeVal
         versionName = dsVersionName
 
@@ -76,7 +77,7 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/jni/CMakeLists.txt")
-            version = "3.22.1"
+            version = "4.1.2"
         }
     }
 
@@ -178,12 +179,12 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
 
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "11"
         // Aggressive Kotlin compiler optimizations for maximum performance
         freeCompilerArgs += listOf(
             "-opt-in=kotlin.RequiresOptIn",
@@ -204,7 +205,7 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
 
-    packaging {
+    packagingOptions {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }

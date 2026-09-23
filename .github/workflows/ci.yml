@@ -82,6 +82,11 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x Android/gradlew
 
+    - name: Install Android SDK packages
+      run: |
+        yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;4.1.2"
+
     - name: Generate Contributors
       continue-on-error: true
       env:
