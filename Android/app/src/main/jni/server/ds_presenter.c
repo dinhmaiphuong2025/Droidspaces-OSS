@@ -33,6 +33,8 @@ static PFNEGLCREATEIMAGEKHRPROC g_eglCreateImageKHR = NULL;
 static PFNEGLDESTROYIMAGEKHRPROC g_eglDestroyImageKHR = NULL;
 static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC g_glEGLImageTargetTexture2DOES = NULL;
 
+static void log_gl_error(const char *tag);
+
 static void resolve_image_procs(void) {
   static int resolved = 0;
   if (resolved) return;
