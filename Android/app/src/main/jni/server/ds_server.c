@@ -67,6 +67,13 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
            (socket_dir && strlen(socket_dir) > 0) ? socket_dir : "/data/local/tmp/ds-wayland");
   unlink(sock_path);
 
+  /* Drop the libwayland lock too: after reinstall the app uid changes and
+   * a stale lock owned by the old uid blocks the new server. */
+  char lock_path[512];
+  snprintf(lock_path, sizeof(lock_path), "%s/wayland-0.lock",
+           (socket_dir && strlen(socket_dir) > 0) ? socket_dir : "/data/local/tmp/ds-wayland");
+  unlink(lock_path);
+
   if (wl_display_add_socket(server->display, "wayland-0") < 0) {
     DS_LOGE("Failed to add socket wayland-0 to Wayland display: %s", strerror(errno));
     wl_display_destroy(server->display);
