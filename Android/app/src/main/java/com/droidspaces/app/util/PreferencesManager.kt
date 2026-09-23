@@ -385,6 +385,42 @@ class PreferencesManager private constructor(context: Context) {
         prefs.edit().putString(KEY_CUSTOM_REPOS, arr.toString()).apply()
     }
 
+    // Wayland extra keys bar for the display screen.
+    // Stored as a JSON array string: [{"label":"Esc","code":1,"sticky":false},...]
+
+    fun getWaylandExtraKeys(): List<WaylandExtraKey> {
+        val raw = prefs.getString(KEY_WAYLAND_EXTRA_KEYS, null) ?: return defaultWaylandExtraKeys()
+        return try {
+            val arr = org.json.JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    add(
+                        WaylandExtraKey(
+                            label = obj.optString("label", ""),
+                            code = obj.optInt("code", 0),
+                            sticky = obj.optBoolean("sticky", false)
+                        )
+                    )
+                }
+            }.filter { it.label.isNotBlank() && it.code in 1..255 }
+        } catch (e: Exception) {
+            defaultWaylandExtraKeys()
+        }
+    }
+
+    fun saveWaylandExtraKeys(keys: List<WaylandExtraKey>) {
+        val arr = org.json.JSONArray()
+        keys.filter { it.label.isNotBlank() && it.code in 1..255 }.forEach { key ->
+            arr.put(org.json.JSONObject().apply {
+                put("label", key.label)
+                put("code", key.code)
+                put("sticky", key.sticky)
+            })
+        }
+        prefs.edit().putString(KEY_WAYLAND_EXTRA_KEYS, arr.toString()).apply()
+    }
+
     /**
      * Clear cached container OS info.
      */
@@ -469,6 +505,7 @@ class PreferencesManager private constructor(context: Context) {
         private const val KEY_CACHED_CONTAINER_NAMES = Constants.KEY_CACHED_CONTAINER_NAMES
         private const val KEY_CACHED_CONTAINER_CONFIG_PREFIX = Constants.KEY_CACHED_CONTAINER_CONFIG_PREFIX
         private const val KEY_CUSTOM_REPOS = Constants.KEY_CUSTOM_REPOS
+        private const val KEY_WAYLAND_EXTRA_KEYS = Constants.KEY_WAYLAND_EXTRA_KEYS
 
         // Double-checked locking pattern for thread-safe singleton
         // @Volatile ensures visibility across threads without full synchronization

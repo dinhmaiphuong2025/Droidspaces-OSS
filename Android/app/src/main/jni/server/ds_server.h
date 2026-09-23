@@ -132,6 +132,10 @@ struct ds_seat {
   int keymap_fd;
   size_t keymap_size;
 
+  int pointer_entered;
+  int keyboard_entered;
+  struct ds_surface *focus_surface;
+
   float cursor_x;
   float cursor_y;
 };

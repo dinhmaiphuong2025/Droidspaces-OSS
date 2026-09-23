@@ -65,6 +65,9 @@ object Constants {
     // Custom rootfs repository subscriptions
     const val KEY_CUSTOM_REPOS = "custom_rootfs_repos"
 
+    // Wayland extra keys bar (label/code/sticky JSON, user editable)
+    const val KEY_WAYLAND_EXTRA_KEYS = "wayland_extra_keys"
+
     // Minimum storage requirements
     const val MIN_STORAGE_GB = 4
 

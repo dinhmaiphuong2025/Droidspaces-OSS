@@ -219,17 +219,50 @@ void ds_seat_send_touch_frame(struct ds_server *server) {
   wl_touch_send_frame(server->seat->touch_resource);
 }
 
+/* Clients ignore pointer and keyboard traffic until enter assigns focus,
+ * so latch focus here instead of trusting the UI layer to order it. */
+static void ensure_pointer_focus(struct ds_server *server) {
+  struct ds_seat *seat = server->seat;
+  struct ds_surface *surf = server->active_surface;
+  if (!seat->pointer_resource || !surf) return;
+  if (seat->pointer_entered && seat->focus_surface == surf) return;
+
+  uint32_t serial = wl_display_next_serial(server->display);
+  wl_fixed_t fx = wl_fixed_from_double((double)seat->cursor_x);
+  wl_fixed_t fy = wl_fixed_from_double((double)seat->cursor_y);
+  wl_pointer_send_enter(seat->pointer_resource, serial, surf->resource, fx, fy);
+  seat->pointer_entered = 1;
+  seat->focus_surface = surf;
+}
+
+static void ensure_keyboard_focus(struct ds_server *server) {
+  struct ds_seat *seat = server->seat;
+  struct ds_surface *surf = server->active_surface;
+  if (!seat->keyboard_resource || !surf) return;
+  if (seat->keyboard_entered && seat->focus_surface == surf) return;
+
+  uint32_t serial = wl_display_next_serial(server->display);
+  struct wl_array keys;
+  wl_array_init(&keys);
+  wl_keyboard_send_enter(seat->keyboard_resource, serial, surf->resource, &keys);
+  wl_array_release(&keys);
+  seat->keyboard_entered = 1;
+  seat->focus_surface = surf;
+}
+
 /* Pointer dispatch */
 void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, float dx, float dy) {
   (void)dx; (void)dy;
   if (!server || !server->seat || !server->seat->pointer_resource) return;
+  if (!server->active_surface) return;
+
+  server->seat->cursor_x = x;
+  server->seat->cursor_y = y;
+  ensure_pointer_focus(server);
 
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   uint32_t time_ms = (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
-
-  server->seat->cursor_x = x;
-  server->seat->cursor_y = y;
 
   wl_fixed_t fx = wl_fixed_from_double((double)x);
   wl_fixed_t fy = wl_fixed_from_double((double)y);
@@ -240,6 +273,8 @@ void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, flo
 
 void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button, uint32_t state) {
   if (!server || !server->seat || !server->seat->pointer_resource) return;
+  if (!server->active_surface) return;
+  ensure_pointer_focus(server);
 
   uint32_t serial = wl_display_next_serial(server->display);
   struct timespec ts;
@@ -265,6 +300,8 @@ void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis, float va
 /* Keyboard dispatch */
 void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state) {
   if (!server || !server->seat || !server->seat->keyboard_resource) return;
+  if (!server->active_surface) return;
+  ensure_keyboard_focus(server);
 
   uint32_t serial = wl_display_next_serial(server->display);
   struct timespec ts;

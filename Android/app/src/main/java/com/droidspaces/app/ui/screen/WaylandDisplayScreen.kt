@@ -19,9 +19,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -75,6 +75,15 @@ fun WaylandDisplayScreen(
     var showControls by remember { mutableStateOf(false) }
     var inputMode by remember { mutableStateOf(InputMode.TOUCHPAD) }
     var isKeyboardVisible by remember { mutableStateOf(false) }
+
+    val prefs = remember(context) {
+        com.droidspaces.app.util.PreferencesManager.getInstance(context)
+    }
+    var extraKeys by remember {
+        mutableStateOf(prefs.getWaylandExtraKeys())
+    }
+    var latchedCodes by remember { mutableStateOf(setOf<Int>()) }
+    var showExtraEditor by remember { mutableStateOf(false) }
 
     val activity = context as? Activity
     val insetsController = remember(activity) {
@@ -349,12 +358,14 @@ fun WaylandDisplayScreen(
             }
         }
 
-        // Bottom Touchpad / Control HUD Pill
+        // Right-edge Touchpad / Control HUD Pill.
+        // Vertical on purpose: the bottom dock now holds the extra keys bar,
+        // so the controls move aside instead of stacking. The action pill
+        // pattern stays horizontal everywhere else, do not copy this shape.
         Surface(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 12.dp)
+                .align(Alignment.CenterEnd)
+                .padding(end = 12.dp)
                 .clip(RoundedCornerShape(24.dp))
                 .border(
                     width = 1.dp,
@@ -364,10 +375,10 @@ fun WaylandDisplayScreen(
             color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.88f),
             tonalElevation = 0.dp
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Mode Toggle: Touchpad vs Direct Touch
                 Box(
@@ -482,6 +493,26 @@ fun WaylandDisplayScreen(
                     )
                 }
             }
+        }
+
+        WaylandExtraKeysDock(
+            keys = extraKeys,
+            latchedCodes = latchedCodes,
+            onTapKey = { key -> latchedCodes = tapWaylandExtraKey(key, latchedCodes) },
+            onEdit = { showExtraEditor = true },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+
+        if (showExtraEditor) {
+            WaylandExtraKeysDialog(
+                initial = extraKeys,
+                onDismiss = { showExtraEditor = false },
+                onSave = { updated ->
+                    prefs.saveWaylandExtraKeys(updated)
+                    extraKeys = updated.ifEmpty { prefs.getWaylandExtraKeys() }
+                    showExtraEditor = false
+                }
+            )
         }
     }
 }
