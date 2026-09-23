@@ -82,14 +82,10 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
   /* Initialize sub-protocols */
   ds_compositor_init(server);
   ds_xdg_shell_init(server);
-  /* dmabuf stays off until feedback is implemented: advertising it makes
-   * clients wait for feedback events that never arrive. DS_ENABLE_DMABUF=1
-   * brings it back for GPU import testing. */
-  if (getenv("DS_ENABLE_DMABUF")) {
-    ds_dmabuf_init(server);
-  } else {
-    DS_LOGI("dmabuf global disabled, clients fall back to SHM");
-  }
+  /* dmabuf must stay advertised: Mesa EGL refuses to initialize the Wayland
+   * platform without it, and no client can render at all. Clients tolerate
+   * the still-empty feedback handlers by falling back as niri already does. */
+  ds_dmabuf_init(server);
   ds_output_init(server, width, height, refresh_mhz);
   ds_seat_init(server);
   ds_viewporter_init(server);
