@@ -161,6 +161,7 @@ static void seat_get_pointer(struct wl_client *client, struct wl_resource *resou
   }
   wl_resource_set_implementation(ptr, &ds_pointer_impl, seat, pointer_resource_destroy);
   seat->pointer_resource = ptr;
+  DS_LOGI("seat: client bound pointer resource=%p", ptr);
 }
 
 static void seat_get_keyboard(struct wl_client *client, struct wl_resource *resource,
@@ -174,6 +175,7 @@ static void seat_get_keyboard(struct wl_client *client, struct wl_resource *reso
   }
   wl_resource_set_implementation(kbd, &ds_keyboard_impl, seat, keyboard_resource_destroy);
   seat->keyboard_resource = kbd;
+  DS_LOGI("seat: client bound keyboard resource=%p", kbd);
 
   if (seat->keymap_fd < 0) {
     seat->keymap_fd = create_keymap_fd(&seat->keymap_size);
@@ -204,6 +206,7 @@ static void seat_get_touch(struct wl_client *client, struct wl_resource *resourc
   }
   wl_resource_set_implementation(tch, &ds_touch_impl, seat, touch_resource_destroy);
   seat->touch_resource = tch;
+  DS_LOGI("seat: client bound touch resource=%p", tch);
 }
 
 static void seat_release(struct wl_client *client, struct wl_resource *resource) {
@@ -306,6 +309,7 @@ static void ensure_pointer_focus(struct ds_server *server) {
   send_pointer_frame(seat);
   seat->pointer_entered = 1;
   seat->pointer_focus = surf;
+  DS_LOGI("seat: pointer focus entered surf=%p at (%.1f, %.1f)", surf, seat->cursor_x, seat->cursor_y);
 }
 
 static void ensure_keyboard_focus(struct ds_server *server) {
@@ -333,6 +337,7 @@ static void ensure_keyboard_focus(struct ds_server *server) {
 
   seat->keyboard_entered = 1;
   seat->keyboard_focus = surf;
+  DS_LOGI("seat: keyboard focus entered surf=%p", surf);
 }
 
 /* Called from ds_compositor.c when a surface dies. Sends leave and resets
@@ -365,9 +370,17 @@ void ds_seat_surface_destroyed(struct ds_server *server, struct ds_surface *surf
 
 /* Touch dispatch */
 void ds_seat_send_touch_down(struct ds_server *server, int32_t id, float x, float y) {
-  if (!server || !server->seat || !server->seat->touch_resource) return;
+  if (!server || !server->seat) return;
+  if (!server->seat->touch_resource) {
+    DS_LOGW("seat: touch_down dropped: no touch_resource bound");
+    return;
+  }
   struct ds_surface *surf = get_target_surface(server);
-  if (!surf) return;
+  if (!surf) {
+    DS_LOGW("seat: touch_down dropped: no target surface");
+    return;
+  }
+  DS_LOGI("seat: send_touch_down id=%d at (%.1f, %.1f)", id, x, y);
 
   pthread_mutex_lock(&server->lock);
   uint32_t serial = wl_display_next_serial(server->display);
@@ -438,8 +451,16 @@ void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, flo
 }
 
 void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button, uint32_t state) {
-  if (!server || !server->seat || !server->seat->pointer_resource) return;
-  if (!get_target_surface(server)) return;
+  if (!server || !server->seat) return;
+  if (!server->seat->pointer_resource) {
+    DS_LOGW("seat: pointer_button dropped: no pointer_resource bound");
+    return;
+  }
+  if (!get_target_surface(server)) {
+    DS_LOGW("seat: pointer_button dropped: no target surface");
+    return;
+  }
+  DS_LOGI("seat: send_pointer_button btn=0x%x, state=%u", button, state);
 
   pthread_mutex_lock(&server->lock);
   ensure_pointer_focus(server);
@@ -470,8 +491,16 @@ void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis, float va
 
 /* Keyboard dispatch */
 void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state) {
-  if (!server || !server->seat || !server->seat->keyboard_resource) return;
-  if (!get_target_surface(server)) return;
+  if (!server || !server->seat) return;
+  if (!server->seat->keyboard_resource) {
+    DS_LOGW("seat: send_key dropped: no keyboard_resource bound");
+    return;
+  }
+  if (!get_target_surface(server)) {
+    DS_LOGW("seat: send_key dropped: no target surface");
+    return;
+  }
+  DS_LOGI("seat: send_key key=%u, state=%u", key, state);
 
   pthread_mutex_lock(&server->lock);
   ensure_keyboard_focus(server);

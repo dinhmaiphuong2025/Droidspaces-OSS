@@ -74,6 +74,7 @@ fun dispatchExtraKey(
     onSystemCommand: ((String) -> Unit)? = null
 ): Map<Int, ModifierState> {
     val mods = modifiers.toMutableMap()
+    android.util.Log.d("DsSeat", "dispatchExtraKey: label=${key.label}, type=${key.type}, code=${key.code}")
 
     when (key.type) {
         WaylandExtraKey.TYPE_MODIFIER -> {

@@ -95,6 +95,7 @@ private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
 
         return object : BaseInputConnection(this, true) {
             override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                android.util.Log.d("DsSeat", "commitText: $text")
                 if (!text.isNullOrEmpty()) {
                     onTextInput?.invoke(text.toString())
                 }
@@ -102,6 +103,7 @@ private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
             }
 
             override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+                android.util.Log.d("DsSeat", "deleteSurroundingText: $beforeLength, $afterLength")
                 repeat(beforeLength) {
                     onKeyInput?.invoke(KeyEvent.KEYCODE_DEL, 1)
                     onKeyInput?.invoke(KeyEvent.KEYCODE_DEL, 0)
@@ -111,6 +113,7 @@ private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
 
             override fun sendKeyEvent(event: KeyEvent): Boolean {
                 val action = if (event.action == KeyEvent.ACTION_UP) 0 else 1
+                android.util.Log.d("DsSeat", "sendKeyEvent: keyCode=${event.keyCode}, action=$action")
                 onKeyInput?.invoke(event.keyCode, action)
                 return true
             }
@@ -118,11 +121,13 @@ private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        android.util.Log.d("DsSeat", "onKeyDown: $keyCode")
         onKeyInput?.invoke(keyCode, 1)
         return true
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        android.util.Log.d("DsSeat", "onKeyUp: $keyCode")
         onKeyInput?.invoke(keyCode, 0)
         return true
     }
@@ -151,6 +156,7 @@ fun WaylandDisplayScreen(
 
     val handleKeyInput: (Int, Int) -> Unit = { androidKeyCode, action ->
         val evdev = WaylandKeyMapper.toEvdev(androidKeyCode)
+        android.util.Log.d("DsSeat", "handleKeyInput: androidKey=$androidKeyCode -> evdev=$evdev, action=$action")
         if (evdev >= 0) {
             WaylandNative.nativeSendKey(evdev, action)
             // If regular key UP, release active unlocked modifiers
@@ -163,6 +169,7 @@ fun WaylandDisplayScreen(
     }
 
     val handleTextInput: (String) -> Unit = { text ->
+        android.util.Log.d("DsSeat", "handleTextInput: '$text'")
         text.forEach { ch ->
             val mapped = WaylandKeyMapper.asciiToEvdev(ch)
             if (mapped != null) {
