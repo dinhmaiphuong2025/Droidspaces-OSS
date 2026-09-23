@@ -309,7 +309,7 @@ fun WaylandDisplayScreen(
         )
 
         // Top Header Controls
-        AnimatedVisibility(
+        androidx.compose.animation.AnimatedVisibility(
             visible = showControls,
             enter = fadeIn(),
             exit = fadeOut(),
@@ -507,6 +507,7 @@ fun WaylandDisplayScreen(
                     )
                 }
             }
+        }
         }
 
         // Extra keys bar docked at the bottom, directly above Gboard
