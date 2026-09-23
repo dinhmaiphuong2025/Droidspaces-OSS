@@ -84,6 +84,18 @@ static void upload_dmabuf_buffer(struct ds_buffer *buf) {
     DS_LOGI("presented first dmabuf frame (%dx%d)", buf->width, buf->height);
   }
 }
+/* Report the first GL/EGL error with a tag so logcat shows what failed */
+static void log_gl_error(const char *tag) {
+  GLenum err = glGetError();
+  if (err != GL_NO_ERROR) {
+    DS_LOGE("%s: GL error 0x%x", tag, err);
+  }
+  EGLint egl_err = eglGetError();
+  if (egl_err != EGL_SUCCESS) {
+    DS_LOGE("%s: EGL error 0x%x", tag, egl_err);
+  }
+}
+
 /* Copy one SHM buffer into the presentation texture. Only ARGB/XRGB8888
  * are handled; anything else keeps the previous frame instead of garbage. */
 static void upload_shm_buffer(struct ds_buffer *buf) {
@@ -119,6 +131,7 @@ static void upload_shm_buffer(struct ds_buffer *buf) {
     }
   }
   wl_shm_buffer_end_access(buf->shm);
+  log_gl_error("upload_shm");
 }
 
 static const char *vertex_shader_source =
@@ -244,6 +257,7 @@ static int ensure_context(struct ds_server *server) {
   glBindBuffer(GL_ARRAY_BUFFER, g_gl.vbo);
   glBufferData(GL_ARRAY_BUFFER, sizeof(quad_data), quad_data, GL_STATIC_DRAW);
 
+  DS_LOGI("presenter GL ready (%dx%d)", server->width, server->height);
   return 0;
 }
 
@@ -325,5 +339,8 @@ void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *s
   glDisableVertexAttribArray(1);
 
   /* SwapBuffers only when a real frame was committed -> ZERO FLICKER */
-  eglSwapBuffers(g_gl.display, g_gl.surface);
+  if (!eglSwapBuffers(g_gl.display, g_gl.surface)) {
+    DS_LOGE("eglSwapBuffers failed");
+  }
+  log_gl_error("present");
 }
