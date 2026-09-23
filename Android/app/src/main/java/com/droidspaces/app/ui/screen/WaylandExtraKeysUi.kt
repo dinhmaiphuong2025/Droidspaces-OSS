@@ -91,12 +91,21 @@ fun dispatchExtraKey(
             val codes = key.comboKeys
             codes.forEach { sendKey(it, 1) }
             codes.reversed().forEach { sendKey(it, 0) }
+
+            // Auto-release active unlocked modifiers after combo completes
+            val unlocked = mods.values.filter { it.active && !it.locked }
+            unlocked.reversed().forEach { sendKey(it.code, 0) }
+            unlocked.forEach { mods.remove(it.code) }
         }
 
         WaylandExtraKey.TYPE_TEXT -> {
             if (sendText != null && key.text.isNotBlank()) {
                 sendText(key.text)
             }
+            // Auto-release active unlocked modifiers after text completes
+            val unlocked = mods.values.filter { it.active && !it.locked }
+            unlocked.reversed().forEach { sendKey(it.code, 0) }
+            unlocked.forEach { mods.remove(it.code) }
         }
 
         WaylandExtraKey.TYPE_SYSTEM -> {
@@ -104,14 +113,14 @@ fun dispatchExtraKey(
         }
 
         else -> {
-            // Regular key: wrap with active modifiers LIFO
-            val held = mods.values.filter { it.active }.sortedBy { it.code }
-            held.forEach { sendKey(it.code, 1) }
+            // Regular key: send down then up
             sendKey(key.code, 1)
             sendKey(key.code, 0)
-            held.reversed().forEach { sendKey(it.code, 0) }
-            // Auto-release unlocked modifiers
-            held.filter { !it.locked }.forEach { mods.remove(it.code) }
+
+            // Auto-release active unlocked modifiers (Alt, Super, Ctrl, Shift)
+            val unlocked = mods.values.filter { it.active && !it.locked }
+            unlocked.reversed().forEach { sendKey(it.code, 0) }
+            unlocked.forEach { mods.remove(it.code) }
         }
     }
     return mods.toMap()

@@ -115,10 +115,16 @@ void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
                              int width, int height) {
   if (!server) return;
 
-  if (server->window && server->window != win) {
-    ANativeWindow_release(server->window);
+  int window_changed = (server->window != win);
+  if (window_changed) {
+    if (server->window) {
+      ANativeWindow_release(server->window);
+    }
+    ds_presenter_detach(server);
+    server->window = win;
   }
-  server->window = win;
+
+  int size_changed = (server->width != width || server->height != height);
   server->width = width;
   server->height = height;
   if (server->output) {
@@ -126,10 +132,11 @@ void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
     server->output->height = height;
   }
 
-  /* Force the EGL surface to be recreated for the new window */
-  ds_presenter_detach(server);
-  ds_xdg_shell_resize_all(server);
-  DS_LOGI("Wayland surface attached (%dx%d)", width, height);
+  if (size_changed) {
+    ds_xdg_shell_resize_all(server);
+  }
+  DS_LOGI("Wayland surface attached (%dx%d)%s", width, height,
+          window_changed ? " [new window]" : " [resized]");
 }
 
 /* Drop the native window but keep clients connected for instant resume. */

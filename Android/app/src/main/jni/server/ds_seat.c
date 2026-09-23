@@ -274,9 +274,21 @@ static void send_pointer_frame(struct ds_seat *seat) {
 /* Focus management: pointer and keyboard track separate surfaces. When focus
  * changes, leave is sent on the old surface before enter on the new one. */
 
+/* Helper: find the best surface to receive input. Prefers the currently active
+ * surface (most recent buffer commit), falling back to the first available
+ * surface if none is active yet. */
+static struct ds_surface *get_target_surface(struct ds_server *server) {
+  if (!server) return NULL;
+  if (server->active_surface) return server->active_surface;
+  if (!wl_list_empty(&server->surfaces)) {
+    return wl_container_of(server->surfaces.next, (struct ds_surface *)NULL, link);
+  }
+  return NULL;
+}
+
 static void ensure_pointer_focus(struct ds_server *server) {
   struct ds_seat *seat = server->seat;
-  struct ds_surface *surf = server->active_surface;
+  struct ds_surface *surf = get_target_surface(server);
   if (!seat->pointer_resource || !surf) return;
   if (seat->pointer_entered && seat->pointer_focus == surf) return;
 
@@ -298,7 +310,7 @@ static void ensure_pointer_focus(struct ds_server *server) {
 
 static void ensure_keyboard_focus(struct ds_server *server) {
   struct ds_seat *seat = server->seat;
-  struct ds_surface *surf = server->active_surface;
+  struct ds_surface *surf = get_target_surface(server);
   if (!seat->keyboard_resource || !surf) return;
   if (seat->keyboard_entered && seat->keyboard_focus == surf) return;
 
@@ -354,7 +366,8 @@ void ds_seat_surface_destroyed(struct ds_server *server, struct ds_surface *surf
 /* Touch dispatch */
 void ds_seat_send_touch_down(struct ds_server *server, int32_t id, float x, float y) {
   if (!server || !server->seat || !server->seat->touch_resource) return;
-  if (!server->active_surface) return;
+  struct ds_surface *surf = get_target_surface(server);
+  if (!surf) return;
 
   pthread_mutex_lock(&server->lock);
   uint32_t serial = wl_display_next_serial(server->display);
@@ -364,8 +377,9 @@ void ds_seat_send_touch_down(struct ds_server *server, int32_t id, float x, floa
   wl_fixed_t fy = wl_fixed_from_double((double)y);
 
   wl_touch_send_down(server->seat->touch_resource, serial, time_ms,
-                     server->active_surface->resource, id, fx, fy);
+                     surf->resource, id, fx, fy);
   pthread_mutex_unlock(&server->lock);
+  wl_display_flush_clients(server->display);
 }
 
 void ds_seat_send_touch_motion(struct ds_server *server, int32_t id, float x, float y) {
@@ -379,6 +393,7 @@ void ds_seat_send_touch_motion(struct ds_server *server, int32_t id, float x, fl
 
   wl_touch_send_motion(server->seat->touch_resource, time_ms, id, fx, fy);
   pthread_mutex_unlock(&server->lock);
+  wl_display_flush_clients(server->display);
 }
 
 void ds_seat_send_touch_up(struct ds_server *server, int32_t id) {
@@ -390,6 +405,7 @@ void ds_seat_send_touch_up(struct ds_server *server, int32_t id) {
 
   wl_touch_send_up(server->seat->touch_resource, serial, time_ms, id);
   pthread_mutex_unlock(&server->lock);
+  wl_display_flush_clients(server->display);
 }
 
 void ds_seat_send_touch_frame(struct ds_server *server) {
@@ -397,13 +413,14 @@ void ds_seat_send_touch_frame(struct ds_server *server) {
   pthread_mutex_lock(&server->lock);
   wl_touch_send_frame(server->seat->touch_resource);
   pthread_mutex_unlock(&server->lock);
+  wl_display_flush_clients(server->display);
 }
 
 /* Pointer dispatch */
 void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, float dx, float dy) {
   (void)dx; (void)dy;
   if (!server || !server->seat || !server->seat->pointer_resource) return;
-  if (!server->active_surface) return;
+  if (!get_target_surface(server)) return;
 
   pthread_mutex_lock(&server->lock);
   server->seat->cursor_x = x;
@@ -417,11 +434,12 @@ void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, flo
   wl_pointer_send_motion(server->seat->pointer_resource, time_ms, fx, fy);
   send_pointer_frame(server->seat);
   pthread_mutex_unlock(&server->lock);
+  wl_display_flush_clients(server->display);
 }
 
 void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button, uint32_t state) {
   if (!server || !server->seat || !server->seat->pointer_resource) return;
-  if (!server->active_surface) return;
+  if (!get_target_surface(server)) return;
 
   pthread_mutex_lock(&server->lock);
   ensure_pointer_focus(server);
@@ -432,11 +450,12 @@ void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button, uint
   wl_pointer_send_button(server->seat->pointer_resource, serial, time_ms, button, state);
   send_pointer_frame(server->seat);
   pthread_mutex_unlock(&server->lock);
+  wl_display_flush_clients(server->display);
 }
 
 void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis, float value) {
   if (!server || !server->seat || !server->seat->pointer_resource) return;
-  if (!server->active_surface) return;
+  if (!get_target_surface(server)) return;
 
   pthread_mutex_lock(&server->lock);
   ensure_pointer_focus(server);
@@ -446,12 +465,13 @@ void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis, float va
   wl_pointer_send_axis(server->seat->pointer_resource, time_ms, axis, fval);
   send_pointer_frame(server->seat);
   pthread_mutex_unlock(&server->lock);
+  wl_display_flush_clients(server->display);
 }
 
 /* Keyboard dispatch */
 void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state) {
   if (!server || !server->seat || !server->seat->keyboard_resource) return;
-  if (!server->active_surface) return;
+  if (!get_target_surface(server)) return;
 
   pthread_mutex_lock(&server->lock);
   ensure_keyboard_focus(server);
@@ -460,11 +480,7 @@ void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state) {
   uint32_t time_ms = now_ms();
 
   wl_keyboard_send_key(server->seat->keyboard_resource, serial, time_ms, key, state);
-
-  /* After every key, resend modifiers so clients track xkb state.
-   * For now we send all-zero; a full implementation would use
-   * xkb_state_update_key and serialize the result. */
-  uint32_t mod_serial = wl_display_next_serial(server->display);
-  wl_keyboard_send_modifiers(server->seat->keyboard_resource, mod_serial, 0, 0, 0, 0);
   pthread_mutex_unlock(&server->lock);
+
+  wl_display_flush_clients(server->display);
 }

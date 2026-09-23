@@ -5,11 +5,17 @@ import android.app.Activity
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
+import android.text.InputType
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -62,12 +68,64 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.droidspaces.app.ui.wayland.WaylandNative
 import com.droidspaces.app.util.WaylandExtraKey
+import com.droidspaces.app.util.WaylandKeyMapper
 import kotlin.math.abs
 import kotlin.math.hypot
 
 enum class InputMode {
     TOUCHPAD,
     DIRECT_TOUCH
+}
+
+private fun isModifierEvdev(code: Int): Boolean =
+    code in setOf(29, 97, 56, 100, 42, 54, 125, 126)
+
+private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
+    var onKeyInput: ((Int, Int) -> Unit)? = null
+    var onTextInput: ((String) -> Unit)? = null
+
+    init {
+        isFocusable = true
+        isFocusableInTouchMode = true
+    }
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_ACTION_NONE
+
+        return object : BaseInputConnection(this, true) {
+            override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                if (!text.isNullOrEmpty()) {
+                    onTextInput?.invoke(text.toString())
+                }
+                return true
+            }
+
+            override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+                repeat(beforeLength) {
+                    onKeyInput?.invoke(KeyEvent.KEYCODE_DEL, 1)
+                    onKeyInput?.invoke(KeyEvent.KEYCODE_DEL, 0)
+                }
+                return true
+            }
+
+            override fun sendKeyEvent(event: KeyEvent): Boolean {
+                val action = if (event.action == KeyEvent.ACTION_UP) 0 else 1
+                onKeyInput?.invoke(event.keyCode, action)
+                return true
+            }
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        onKeyInput?.invoke(keyCode, 1)
+        return true
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        onKeyInput?.invoke(keyCode, 0)
+        return true
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -89,6 +147,36 @@ fun WaylandDisplayScreen(
     var extraKeyRows by remember { mutableStateOf(prefs.getWaylandExtraKeys()) }
     var modifiers by remember { mutableStateOf(mapOf<Int, ModifierState>()) }
     var showExtraEditor by remember { mutableStateOf(false) }
+    var surfaceViewRef by remember { mutableStateOf<WaylandSurfaceView?>(null) }
+
+    val handleKeyInput: (Int, Int) -> Unit = { androidKeyCode, action ->
+        val evdev = WaylandKeyMapper.toEvdev(androidKeyCode)
+        if (evdev >= 0) {
+            WaylandNative.nativeSendKey(evdev, action)
+            // If regular key UP, release active unlocked modifiers
+            if (action == 0 && !isModifierEvdev(evdev)) {
+                val unlocked = modifiers.values.filter { it.active && !it.locked }
+                unlocked.reversed().forEach { WaylandNative.nativeSendKey(it.code, 0) }
+                modifiers = modifiers.filterValues { it.locked }
+            }
+        }
+    }
+
+    val handleTextInput: (String) -> Unit = { text ->
+        text.forEach { ch ->
+            val mapped = WaylandKeyMapper.asciiToEvdev(ch)
+            if (mapped != null) {
+                val (scancode, needsShift) = mapped
+                if (needsShift) WaylandNative.nativeSendKey(42, 1)
+                WaylandNative.nativeSendKey(scancode, 1)
+                WaylandNative.nativeSendKey(scancode, 0)
+                if (needsShift) WaylandNative.nativeSendKey(42, 0)
+            }
+        }
+        val unlocked = modifiers.values.filter { it.active && !it.locked }
+        unlocked.reversed().forEach { WaylandNative.nativeSendKey(it.code, 0) }
+        modifiers = modifiers.filterValues { it.locked }
+    }
 
     val activity = context as? Activity
     val insetsController = remember(activity) {
@@ -143,12 +231,14 @@ fun WaylandDisplayScreen(
     val handleSystemCommand: (String) -> Unit = { cmd ->
         when (cmd) {
             "toggle_ime" -> {
-                if (insetsController != null) {
-                    if (isKeyboardVisible) {
-                        insetsController.hide(WindowInsetsCompat.Type.ime())
-                    } else {
-                        insetsController.show(WindowInsetsCompat.Type.ime())
-                    }
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                if (isKeyboardVisible) {
+                    insetsController?.hide(WindowInsetsCompat.Type.ime())
+                    surfaceViewRef?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+                } else {
+                    surfaceViewRef?.requestFocus()
+                    surfaceViewRef?.let { imm?.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT) }
+                    insetsController?.show(WindowInsetsCompat.Type.ime())
                 }
             }
             "mouse_left" -> {
@@ -175,45 +265,50 @@ fun WaylandDisplayScreen(
         ) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                SurfaceView(ctx).apply {
-                    holder.addCallback(object : SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: SurfaceHolder) {}
+                factory = { ctx ->
+                    WaylandSurfaceView(ctx).apply {
+                        surfaceViewRef = this
+                        onKeyInput = handleKeyInput
+                        onTextInput = handleTextInput
 
-                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
-                            if (w <= 0 || h <= 0) return
-                            screenW = w.toFloat()
-                            screenH = h.toFloat()
+                        holder.addCallback(object : SurfaceHolder.Callback {
+                            override fun surfaceCreated(holder: SurfaceHolder) {}
 
-                            val windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                            val refreshRate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                ctx.display?.refreshRate ?: 60f
-                            } else {
-                                @Suppress("DEPRECATION")
-                                windowManager.defaultDisplay.refreshRate
+                            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
+                                if (w < 200 || h < 200) return
+                                screenW = w.toFloat()
+                                screenH = h.toFloat()
+
+                                val windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                                val refreshRate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    ctx.display?.refreshRate ?: 60f
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    windowManager.defaultDisplay.refreshRate
+                                }
+                                val refreshMhz = (refreshRate * 1000).toInt()
+
+                                val socketPath = "/data/local/tmp/ds-wayland/wayland-0"
+                                WaylandNative.nativeSetSurface(
+                                    surface = holder.surface,
+                                    width = w,
+                                    height = h,
+                                    refreshMhz = refreshMhz,
+                                    socketPath = socketPath
+                                )
                             }
-                            val refreshMhz = (refreshRate * 1000).toInt()
 
-                            val socketPath = "/data/local/tmp/ds-wayland/wayland-0"
-                            WaylandNative.nativeSetSurface(
-                                surface = holder.surface,
-                                width = w,
-                                height = h,
-                                refreshMhz = refreshMhz,
-                                socketPath = socketPath
-                            )
-                        }
+                            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                WaylandNative.nativeDestroySurface()
+                            }
+                        })
 
-                        override fun surfaceDestroyed(holder: SurfaceHolder) {
-                            WaylandNative.nativeDestroySurface()
-                        }
-                    })
-
-                    setOnTouchListener { _, event ->
-                        if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount >= 3) {
-                            showControls = !showControls
-                            return@setOnTouchListener true
-                        }
+                        setOnTouchListener { view, event ->
+                            view.requestFocus()
+                            if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount >= 3) {
+                                showControls = !showControls
+                                return@setOnTouchListener true
+                            }
 
                         if (inputMode == InputMode.TOUCHPAD) {
                             when (event.actionMasked) {
@@ -489,12 +584,14 @@ fun WaylandDisplayScreen(
                             else MaterialTheme.colorScheme.surfaceContainerHigh
                         )
                         .clickable {
-                            if (insetsController != null) {
-                                if (isKeyboardVisible) {
-                                    insetsController.hide(WindowInsetsCompat.Type.ime())
-                                } else {
-                                    insetsController.show(WindowInsetsCompat.Type.ime())
-                                }
+                            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                            if (isKeyboardVisible) {
+                                insetsController?.hide(WindowInsetsCompat.Type.ime())
+                                surfaceViewRef?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+                            } else {
+                                surfaceViewRef?.requestFocus()
+                                surfaceViewRef?.let { imm?.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT) }
+                                insetsController?.show(WindowInsetsCompat.Type.ime())
                             }
                         },
                     contentAlignment = Alignment.Center
@@ -518,6 +615,7 @@ fun WaylandDisplayScreen(
                 modifiers = dispatchExtraKey(
                     key = key,
                     modifiers = modifiers,
+                    sendText = handleTextInput,
                     onSystemCommand = handleSystemCommand
                 )
             },
