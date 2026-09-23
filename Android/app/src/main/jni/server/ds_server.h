@@ -176,7 +176,39 @@ struct ds_server {
   struct wl_global *xdg_wm_base_global;
   struct wl_global *dmabuf_global;
   struct wl_global *viewporter_global;
+
+  /* Thread-safe input dispatch */
+  int input_eventfd;
+  struct wl_event_source *input_source;
+  pthread_mutex_t input_lock;
+  struct ds_input_event input_queue[256];
+  uint16_t input_head;
+  uint16_t input_tail;
 };
+
+enum ds_input_type {
+  DS_INPUT_KEY = 1,
+  DS_INPUT_POINTER_MOTION,
+  DS_INPUT_POINTER_BUTTON,
+  DS_INPUT_POINTER_AXIS,
+  DS_INPUT_TOUCH_DOWN,
+  DS_INPUT_TOUCH_MOTION,
+  DS_INPUT_TOUCH_UP,
+  DS_INPUT_TOUCH_FRAME,
+};
+
+struct ds_input_event {
+  enum ds_input_type type;
+  union {
+    struct { uint32_t key; uint32_t state; } key;
+    struct { float x; float y; float dx; float dy; } pointer_motion;
+    struct { uint32_t button; uint32_t state; } pointer_button;
+    struct { uint32_t axis; float value; } pointer_axis;
+    struct { int32_t id; float x; float y; } touch;
+  };
+};
+
+void ds_seat_dispatch_queue(struct ds_server *server);
 
 /* Subsystem initializers */
 int ds_compositor_init(struct ds_server *server);

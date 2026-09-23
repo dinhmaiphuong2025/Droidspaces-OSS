@@ -8,12 +8,30 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #ifdef __ANDROID__
 #include <android/native_window.h>
 #endif
+
+static void ds_wayland_log_handler(const char *fmt, va_list ap) {
+  char buf[512];
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  DS_LOGE("libwayland: %s", buf);
+}
+
+static int on_input_eventfd(int fd, uint32_t mask, void *data) {
+  (void)mask;
+  struct ds_server *server = data;
+  uint64_t val = 0;
+  ssize_t ret = read(fd, &val, sizeof(val));
+  (void)ret;
+
+  ds_seat_dispatch_queue(server);
+  return 1;
+}
 
 static void *server_event_thread(void *arg) {
   struct ds_server *server = arg;
@@ -52,7 +70,15 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
     return NULL;
   }
 
+  wl_log_set_handler_server(ds_wayland_log_handler);
+  pthread_mutex_init(&server->input_lock, NULL);
+  server->input_eventfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+
   server->loop = wl_display_get_event_loop(server->display);
+  if (server->input_eventfd >= 0) {
+    server->input_source = wl_event_loop_add_fd(server->loop, server->input_eventfd,
+                                                WL_EVENT_READABLE, on_input_eventfd, server);
+  }
 
   /* Set up socket directory */
   if (socket_dir && strlen(socket_dir) > 0) {
@@ -175,6 +201,16 @@ void ds_server_destroy(struct ds_server *server) {
     if (server->output->global) wl_global_destroy(server->output->global);
     free(server->output);
   }
+
+  if (server->input_source) {
+    wl_event_source_remove(server->input_source);
+    server->input_source = NULL;
+  }
+  if (server->input_eventfd >= 0) {
+    close(server->input_eventfd);
+    server->input_eventfd = -1;
+  }
+  pthread_mutex_destroy(&server->input_lock);
 
   if (server->seat) {
     if (server->seat->global) wl_global_destroy(server->seat->global);

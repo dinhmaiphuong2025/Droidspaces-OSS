@@ -77,10 +77,12 @@ static void params_add(struct wl_client *client, struct wl_resource *resource,
 
 static void create_buffer_from_params(struct wl_client *client, struct wl_resource *params_resource,
                                       uint32_t buffer_id, int32_t width, int32_t height,
-                                      uint32_t format) {
+                                      uint32_t format, int is_immed) {
   struct ds_dmabuf_params *params = wl_resource_get_user_data(params_resource);
   if (!params || params->plane_count < 1) {
-    zwp_linux_buffer_params_v1_send_failed(params_resource);
+    if (!is_immed) {
+      zwp_linux_buffer_params_v1_send_failed(params_resource);
+    }
     return;
   }
 
@@ -120,23 +122,26 @@ static void create_buffer_from_params(struct wl_client *client, struct wl_resour
 
   wl_resource_set_implementation(buf->resource, &ds_buffer_impl, buf, buffer_resource_destroy);
 
-  /* Tell the client the buffer is ready for attach */
-  zwp_linux_buffer_params_v1_send_created(params_resource, buf->resource);
+  /* Wayland spec: create_immed must NOT send created/failed event.
+   * Only the async create request expects zwp_linux_buffer_params_v1.created. */
+  if (!is_immed) {
+    zwp_linux_buffer_params_v1_send_created(params_resource, buf->resource);
+  }
 }
 
 static void params_create(struct wl_client *client, struct wl_resource *resource,
                           int32_t width, int32_t height, uint32_t format, uint32_t flags) {
   (void)flags;
   /* Not immed: create buffer and send created event */
-  uint32_t buffer_id = 0; /* will be populated if client used create instead of create_immed */
-  create_buffer_from_params(client, resource, buffer_id, width, height, format);
+  uint32_t buffer_id = 0;
+  create_buffer_from_params(client, resource, buffer_id, width, height, format, 0);
 }
 
 static void params_create_immed(struct wl_client *client, struct wl_resource *resource,
                                 uint32_t buffer_id, int32_t width, int32_t height,
                                 uint32_t format, uint32_t flags) {
   (void)flags;
-  create_buffer_from_params(client, resource, buffer_id, width, height, format);
+  create_buffer_from_params(client, resource, buffer_id, width, height, format, 1);
 }
 
 static const struct zwp_linux_buffer_params_v1_interface ds_params_impl = {

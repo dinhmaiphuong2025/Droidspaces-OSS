@@ -393,74 +393,62 @@ void ds_seat_surface_destroyed(struct ds_server *server, struct ds_surface *surf
   }
 }
 
-/* Touch dispatch */
-void ds_seat_send_touch_down(struct ds_server *server, int32_t id, float x, float y) {
-  if (!server || !server->seat) return;
-  if (!server->seat->touch_resource) {
-    DS_LOGW("seat: touch_down dropped: no touch_resource bound");
-    return;
+static void enqueue_input_event(struct ds_server *server, const struct ds_input_event *ev) {
+  if (!server) return;
+  pthread_mutex_lock(&server->input_lock);
+  uint16_t next_head = (uint16_t)((server->input_head + 1) % 256);
+  if (next_head != server->input_tail) {
+    server->input_queue[server->input_head] = *ev;
+    server->input_head = next_head;
+  } else {
+    DS_LOGW("seat: input_queue overflow, dropping event type=%d", ev->type);
   }
-  struct ds_surface *surf = get_target_surface(server);
-  if (!surf) {
-    DS_LOGW("seat: touch_down dropped: no target surface");
-    return;
-  }
-  DS_LOGI("seat: send_touch_down id=%d at (%.1f, %.1f)", id, x, y);
+  pthread_mutex_unlock(&server->input_lock);
 
-  pthread_mutex_lock(&server->lock);
+  if (server->input_eventfd >= 0) {
+    uint64_t one = 1;
+    write(server->input_eventfd, &one, sizeof(one));
+  }
+}
+
+static void dispatch_touch_down(struct ds_server *server, int32_t id, float x, float y) {
+  if (!server->seat || !server->seat->touch_resource) return;
+  struct ds_surface *surf = get_target_surface(server);
+  if (!surf) return;
+
   uint32_t serial = wl_display_next_serial(server->display);
   uint32_t time_ms = now_ms();
-
   wl_fixed_t fx = wl_fixed_from_double((double)x);
   wl_fixed_t fy = wl_fixed_from_double((double)y);
 
   wl_touch_send_down(server->seat->touch_resource, serial, time_ms,
                      surf->resource, id, fx, fy);
-  pthread_mutex_unlock(&server->lock);
-  wl_display_flush_clients(server->display);
 }
 
-void ds_seat_send_touch_motion(struct ds_server *server, int32_t id, float x, float y) {
-  if (!server || !server->seat || !server->seat->touch_resource) return;
-
-  pthread_mutex_lock(&server->lock);
+static void dispatch_touch_motion(struct ds_server *server, int32_t id, float x, float y) {
+  if (!server->seat || !server->seat->touch_resource) return;
   uint32_t time_ms = now_ms();
-
   wl_fixed_t fx = wl_fixed_from_double((double)x);
   wl_fixed_t fy = wl_fixed_from_double((double)y);
-
   wl_touch_send_motion(server->seat->touch_resource, time_ms, id, fx, fy);
-  pthread_mutex_unlock(&server->lock);
-  wl_display_flush_clients(server->display);
 }
 
-void ds_seat_send_touch_up(struct ds_server *server, int32_t id) {
-  if (!server || !server->seat || !server->seat->touch_resource) return;
-
-  pthread_mutex_lock(&server->lock);
+static void dispatch_touch_up(struct ds_server *server, int32_t id) {
+  if (!server->seat || !server->seat->touch_resource) return;
   uint32_t serial = wl_display_next_serial(server->display);
   uint32_t time_ms = now_ms();
-
   wl_touch_send_up(server->seat->touch_resource, serial, time_ms, id);
-  pthread_mutex_unlock(&server->lock);
-  wl_display_flush_clients(server->display);
 }
 
-void ds_seat_send_touch_frame(struct ds_server *server) {
-  if (!server || !server->seat || !server->seat->touch_resource) return;
-  pthread_mutex_lock(&server->lock);
+static void dispatch_touch_frame(struct ds_server *server) {
+  if (!server->seat || !server->seat->touch_resource) return;
   wl_touch_send_frame(server->seat->touch_resource);
-  pthread_mutex_unlock(&server->lock);
-  wl_display_flush_clients(server->display);
 }
 
-/* Pointer dispatch */
-void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, float dx, float dy) {
-  (void)dx; (void)dy;
-  if (!server || !server->seat || !server->seat->pointer_resource) return;
+static void dispatch_pointer_motion(struct ds_server *server, float x, float y) {
+  if (!server->seat || !server->seat->pointer_resource) return;
   if (!get_target_surface(server)) return;
 
-  pthread_mutex_lock(&server->lock);
   server->seat->cursor_x = x;
   server->seat->cursor_y = y;
   ensure_pointer_focus(server);
@@ -471,70 +459,148 @@ void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, flo
 
   wl_pointer_send_motion(server->seat->pointer_resource, time_ms, fx, fy);
   send_pointer_frame(server->seat);
-  pthread_mutex_unlock(&server->lock);
-  wl_display_flush_clients(server->display);
 }
 
-void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button, uint32_t state) {
-  if (!server || !server->seat) return;
-  if (!server->seat->pointer_resource) {
-    DS_LOGW("seat: pointer_button dropped: no pointer_resource bound");
-    return;
-  }
-  if (!get_target_surface(server)) {
-    DS_LOGW("seat: pointer_button dropped: no target surface");
-    return;
-  }
-  DS_LOGI("seat: send_pointer_button btn=0x%x, state=%u", button, state);
+static void dispatch_pointer_button(struct ds_server *server, uint32_t button, uint32_t state) {
+  if (!server->seat || !server->seat->pointer_resource) return;
+  if (!get_target_surface(server)) return;
 
-  pthread_mutex_lock(&server->lock);
   ensure_pointer_focus(server);
-
   uint32_t serial = wl_display_next_serial(server->display);
   uint32_t time_ms = now_ms();
 
   wl_pointer_send_button(server->seat->pointer_resource, serial, time_ms, button, state);
   send_pointer_frame(server->seat);
-  pthread_mutex_unlock(&server->lock);
-  wl_display_flush_clients(server->display);
 }
 
-void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis, float value) {
-  if (!server || !server->seat || !server->seat->pointer_resource) return;
+static void dispatch_pointer_axis(struct ds_server *server, uint32_t axis, float value) {
+  if (!server->seat || !server->seat->pointer_resource) return;
   if (!get_target_surface(server)) return;
 
-  pthread_mutex_lock(&server->lock);
   ensure_pointer_focus(server);
-
   uint32_t time_ms = now_ms();
   wl_fixed_t fval = wl_fixed_from_double((double)value);
   wl_pointer_send_axis(server->seat->pointer_resource, time_ms, axis, fval);
   send_pointer_frame(server->seat);
-  pthread_mutex_unlock(&server->lock);
-  wl_display_flush_clients(server->display);
 }
 
-/* Keyboard dispatch */
-void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state) {
-  if (!server || !server->seat) return;
-  if (!server->seat->keyboard_resource) {
-    DS_LOGW("seat: send_key dropped: no keyboard_resource bound");
-    return;
-  }
-  if (!get_target_surface(server)) {
-    DS_LOGW("seat: send_key dropped: no target surface");
-    return;
-  }
-  DS_LOGI("seat: send_key key=%u, state=%u", key, state);
+static void dispatch_key(struct ds_server *server, uint32_t key, uint32_t state) {
+  if (!server->seat || !server->seat->keyboard_resource) return;
+  if (!get_target_surface(server)) return;
 
-  pthread_mutex_lock(&server->lock);
   ensure_keyboard_focus(server);
-
   uint32_t serial = wl_display_next_serial(server->display);
   uint32_t time_ms = now_ms();
 
   wl_keyboard_send_key(server->seat->keyboard_resource, serial, time_ms, key, state);
-  pthread_mutex_unlock(&server->lock);
+}
+
+void ds_seat_dispatch_queue(struct ds_server *server) {
+  if (!server) return;
+
+  struct ds_input_event batch[32];
+  while (1) {
+    int count = 0;
+    pthread_mutex_lock(&server->input_lock);
+    while (server->input_tail != server->input_head && count < 32) {
+      batch[count++] = server->input_queue[server->input_tail];
+      server->input_tail = (uint16_t)((server->input_tail + 1) % 256);
+    }
+    pthread_mutex_unlock(&server->input_lock);
+
+    if (count == 0) break;
+
+    for (int i = 0; i < count; i++) {
+      switch (batch[i].type) {
+        case DS_INPUT_KEY:
+          dispatch_key(server, batch[i].key.key, batch[i].key.state);
+          break;
+        case DS_INPUT_POINTER_MOTION:
+          dispatch_pointer_motion(server, batch[i].pointer_motion.x, batch[i].pointer_motion.y);
+          break;
+        case DS_INPUT_POINTER_BUTTON:
+          dispatch_pointer_button(server, batch[i].pointer_button.button, batch[i].pointer_button.state);
+          break;
+        case DS_INPUT_POINTER_AXIS:
+          dispatch_pointer_axis(server, batch[i].pointer_axis.axis, batch[i].pointer_axis.value);
+          break;
+        case DS_INPUT_TOUCH_DOWN:
+          dispatch_touch_down(server, batch[i].touch.id, batch[i].touch.x, batch[i].touch.y);
+          break;
+        case DS_INPUT_TOUCH_MOTION:
+          dispatch_touch_motion(server, batch[i].touch.id, batch[i].touch.x, batch[i].touch.y);
+          break;
+        case DS_INPUT_TOUCH_UP:
+          dispatch_touch_up(server, batch[i].touch.id);
+          break;
+        case DS_INPUT_TOUCH_FRAME:
+          dispatch_touch_frame(server);
+          break;
+      }
+    }
+  }
 
   wl_display_flush_clients(server->display);
+}
+
+/* JNI producers enqueue events for safe dispatch on the server event loop */
+void ds_seat_send_touch_down(struct ds_server *server, int32_t id, float x, float y) {
+  struct ds_input_event ev = {
+    .type = DS_INPUT_TOUCH_DOWN,
+    .touch = { .id = id, .x = x, .y = y }
+  };
+  enqueue_input_event(server, &ev);
+}
+
+void ds_seat_send_touch_motion(struct ds_server *server, int32_t id, float x, float y) {
+  struct ds_input_event ev = {
+    .type = DS_INPUT_TOUCH_MOTION,
+    .touch = { .id = id, .x = x, .y = y }
+  };
+  enqueue_input_event(server, &ev);
+}
+
+void ds_seat_send_touch_up(struct ds_server *server, int32_t id) {
+  struct ds_input_event ev = {
+    .type = DS_INPUT_TOUCH_UP,
+    .touch = { .id = id }
+  };
+  enqueue_input_event(server, &ev);
+}
+
+void ds_seat_send_touch_frame(struct ds_server *server) {
+  struct ds_input_event ev = { .type = DS_INPUT_TOUCH_FRAME };
+  enqueue_input_event(server, &ev);
+}
+
+void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, float dx, float dy) {
+  struct ds_input_event ev = {
+    .type = DS_INPUT_POINTER_MOTION,
+    .pointer_motion = { .x = x, .y = y, .dx = dx, .dy = dy }
+  };
+  enqueue_input_event(server, &ev);
+}
+
+void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button, uint32_t state) {
+  struct ds_input_event ev = {
+    .type = DS_INPUT_POINTER_BUTTON,
+    .pointer_button = { .button = button, .state = state }
+  };
+  enqueue_input_event(server, &ev);
+}
+
+void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis, float value) {
+  struct ds_input_event ev = {
+    .type = DS_INPUT_POINTER_AXIS,
+    .pointer_axis = { .axis = axis, .value = value }
+  };
+  enqueue_input_event(server, &ev);
+}
+
+void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state) {
+  struct ds_input_event ev = {
+    .type = DS_INPUT_KEY,
+    .key = { .key = key, .state = state }
+  };
+  enqueue_input_event(server, &ev);
 }
