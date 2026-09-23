@@ -996,7 +996,6 @@ wl_client_get_destroy_late_listener(struct wl_client *client,
 WL_EXPORT void
 wl_client_destroy(struct wl_client *client)
 {
-	DS_LOGW("wl_client_destroy: destroying client=%p", client);
 
 	/* wl_client_destroy() should not be called twice for the same client. */
 	if (wl_list_empty(&client->link)) {
@@ -1686,21 +1685,11 @@ socket_data(int fd, uint32_t mask, void *data)
 	length = sizeof name;
 	client_fd = wl_os_accept_cloexec(fd, (struct sockaddr *) &name,
 					 &length);
-	if (client_fd < 0) {
+	if (client_fd < 0)
 		wl_log("failed to accept: %s\n", strerror(errno));
-	} else {
-		struct wl_client *client = wl_client_create(display, client_fd);
-		if (!client) {
+	else
+		if (!wl_client_create(display, client_fd))
 			close(client_fd);
-		} else {
-			pid_t c_pid = 0;
-			uid_t c_uid = 0;
-			gid_t c_gid = 0;
-			wl_client_get_credentials(client, &c_pid, &c_uid, &c_gid);
-			DS_LOGI("wl_display: accepted client fd=%d pid=%d uid=%d gid=%d client=%p",
-			        client_fd, (int)c_pid, (int)c_uid, (int)c_gid, client);
-		}
-	}
 
 	return 1;
 }

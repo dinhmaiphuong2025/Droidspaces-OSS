@@ -122,7 +122,13 @@ static void touch_resource_destroy(struct wl_resource *resource) {
 static void pointer_set_cursor(struct wl_client *client, struct wl_resource *resource,
                                uint32_t serial, struct wl_resource *surface,
                                int32_t hotspot_x, int32_t hotspot_y) {
-  (void)client; (void)resource; (void)serial; (void)surface; (void)hotspot_x; (void)hotspot_y;
+  (void)client; (void)resource; (void)serial; (void)hotspot_x; (void)hotspot_y;
+  if (surface) {
+    struct ds_surface *surf = wl_resource_get_user_data(surface);
+    if (surf) {
+      surf->role = DS_SURFACE_ROLE_CURSOR;
+    }
+  }
 }
 
 static void pointer_release(struct wl_client *client, struct wl_resource *resource) {
@@ -295,9 +301,15 @@ static void send_pointer_frame(struct ds_seat *seat) {
  * surface if none is active yet. */
 static struct ds_surface *get_target_surface(struct ds_server *server) {
   if (!server) return NULL;
-  if (server->active_surface) return server->active_surface;
-  if (!wl_list_empty(&server->surfaces)) {
-    return wl_container_of(server->surfaces.next, (struct ds_surface *)NULL, link);
+  if (server->active_surface && server->active_surface->xdg_surf &&
+      server->active_surface->role != DS_SURFACE_ROLE_CURSOR) {
+    return server->active_surface;
+  }
+  struct ds_surface *surf;
+  wl_list_for_each(surf, &server->surfaces, link) {
+    if (surf->xdg_surf && surf->role != DS_SURFACE_ROLE_CURSOR && surf->is_mapped) {
+      return surf;
+    }
   }
   return NULL;
 }

@@ -116,10 +116,12 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
     surf->width = surf->pending_buffer->width;
     surf->height = surf->pending_buffer->height;
     surf->is_mapped = 1;
-    surf->server->active_surface = surf;
+    if (surf->xdg_surf && surf->role != DS_SURFACE_ROLE_CURSOR) {
+      surf->server->active_surface = surf;
 
-    /* Present directly via ASurfaceControl zero-flicker presenter */
-    ds_presenter_present_surface(surf->server, surf);
+      /* Present directly via ASurfaceControl zero-flicker presenter */
+      ds_presenter_present_surface(surf->server, surf);
+    }
 
     /* Release the buffer so double-buffered clients keep submitting frames.
      * Without this, clients stall after their buffers are all busy. */
@@ -329,7 +331,11 @@ static const struct wl_subsurface_interface ds_subsurface_impl = {
 static void subcompositor_get_subsurface(struct wl_client *client, struct wl_resource *resource,
                                         uint32_t id, struct wl_resource *surface,
                                         struct wl_resource *parent) {
-  (void)resource; (void)surface; (void)parent;
+  (void)resource; (void)parent;
+  struct ds_surface *surf = wl_resource_get_user_data(surface);
+  if (surf) {
+    surf->role = DS_SURFACE_ROLE_SUBSURFACE;
+  }
   struct wl_resource *sub = wl_resource_create(client, &wl_subsurface_interface, 1, id);
   if (!sub) {
     wl_client_post_no_memory(client);

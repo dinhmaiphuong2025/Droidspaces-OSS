@@ -221,6 +221,7 @@ static void wm_base_get_xdg_surface(struct wl_client *client, struct wl_resource
 
   xdg_surf->surface = surf;
   surf->xdg_surf = xdg_surf;
+  surf->role = DS_SURFACE_ROLE_TOPLEVEL;
 
   xdg_surf->resource = wl_resource_create(client, &xdg_surface_interface,
                                           wl_resource_get_version(resource), id);

@@ -68,10 +68,19 @@ struct ds_buffer {
   struct wl_listener destroy_listener;
 };
 
+/* Surface roles */
+enum ds_surface_role {
+  DS_SURFACE_ROLE_NONE = 0,
+  DS_SURFACE_ROLE_TOPLEVEL,
+  DS_SURFACE_ROLE_CURSOR,
+  DS_SURFACE_ROLE_SUBSURFACE,
+};
+
 /* Surface representation */
 struct ds_surface {
   struct wl_resource *resource;
   struct ds_server *server;
+  enum ds_surface_role role;
 
   struct ds_buffer *pending_buffer;
   struct ds_buffer *current_buffer;
