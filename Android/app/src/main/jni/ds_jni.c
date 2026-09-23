@@ -28,12 +28,8 @@ JNIEXPORT jboolean JNICALL JNI_METHOD(nativeSetSurface)(
     JNIEnv *env, jobject thiz, jobject surface, jint width, jint height,
     jint refreshMhz, jstring socketPath) {
   (void)thiz;
+  (void)refreshMhz;
   pthread_mutex_lock(&g_server_lock);
-
-  if (g_server) {
-    ds_server_destroy(g_server);
-    g_server = NULL;
-  }
 
   if (!surface) {
     pthread_mutex_unlock(&g_server_lock);
@@ -51,13 +47,31 @@ JNIEXPORT jboolean JNICALL JNI_METHOD(nativeSetSurface)(
   char dir_buf[256];
   if (path_str && strlen(path_str) > 0) {
     strncpy(dir_buf, path_str, sizeof(dir_buf) - 1);
+    dir_buf[sizeof(dir_buf) - 1] = '\0';
     char *dir = dirname(dir_buf);
     strncpy(dir_buf, dir, sizeof(dir_buf) - 1);
+    dir_buf[sizeof(dir_buf) - 1] = '\0';
   } else {
     strncpy(dir_buf, "/data/local/tmp/ds-wayland", sizeof(dir_buf) - 1);
+    dir_buf[sizeof(dir_buf) - 1] = '\0';
   }
   if (path_str) {
     (*env)->ReleaseStringUTFChars(env, socketPath, path_str);
+  }
+
+  /* Keep the display and its clients across surface changes. A new server
+   * is only needed when there is none, or the socket dir moved. */
+  if (g_server && strcmp(g_server->sock_dir, dir_buf) == 0) {
+    pthread_mutex_lock(&g_server->lock);
+    ds_server_attach_window(g_server, win, width, height);
+    pthread_mutex_unlock(&g_server->lock);
+    pthread_mutex_unlock(&g_server_lock);
+    return JNI_TRUE;
+  }
+
+  if (g_server) {
+    ds_server_destroy(g_server);
+    g_server = NULL;
   }
 
   g_server = ds_server_create(dir_buf, width, height, refreshMhz, win);
@@ -70,8 +84,10 @@ JNIEXPORT void JNICALL JNI_METHOD(nativeDestroySurface)(JNIEnv *env, jobject thi
   (void)env; (void)thiz;
   pthread_mutex_lock(&g_server_lock);
   if (g_server) {
-    ds_server_destroy(g_server);
-    g_server = NULL;
+    /* Detach only: clients stay connected for instant resume */
+    pthread_mutex_lock(&g_server->lock);
+    ds_server_detach_window(g_server);
+    pthread_mutex_unlock(&g_server->lock);
   }
   pthread_mutex_unlock(&g_server_lock);
 }

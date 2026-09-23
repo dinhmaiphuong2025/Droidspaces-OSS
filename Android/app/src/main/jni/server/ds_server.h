@@ -145,6 +145,7 @@ struct ds_server {
 
   pthread_mutex_t lock;
   ANativeWindow *window;
+  char sock_dir[256];
   int width;
   int height;
   int refresh_mhz;
@@ -178,6 +179,14 @@ void ds_shm_free_buffer(struct ds_buffer *buf);
 /* Presenter API */
 void ds_presenter_init(struct ds_server *server);
 void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *surf);
+void ds_presenter_detach(struct ds_server *server);
+
+/* Server window lifecycle: the display and its clients survive surface
+ * changes, only the native window and EGL surface are swapped. */
+void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
+                             int width, int height);
+void ds_server_detach_window(struct ds_server *server);
+void ds_xdg_shell_resize_all(struct ds_server *server);
 
 /* Input API (called from JNI) */
 void ds_seat_send_touch_down(struct ds_server *server, int32_t id, float x, float y);

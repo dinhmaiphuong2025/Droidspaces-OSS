@@ -154,9 +154,11 @@ static GLuint compile_shader(GLenum type, const char *source) {
   return shader;
 }
 
-static int init_gl(struct ds_server *server) {
-  if (g_gl.initialized) return 0;
-  if (!server->window) return -1;
+/* Display and context live as long as the process. The EGL surface is
+ * tied to the current ANativeWindow and is recreated on every swap. */
+static int ensure_context(struct ds_server *server) {
+  (void)server;
+  if (g_gl.context != EGL_NO_CONTEXT) return 0;
 
   g_gl.display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
   if (g_gl.display == EGL_NO_DISPLAY) {
@@ -242,10 +244,45 @@ static int init_gl(struct ds_server *server) {
   glBindBuffer(GL_ARRAY_BUFFER, g_gl.vbo);
   glBufferData(GL_ARRAY_BUFFER, sizeof(quad_data), quad_data, GL_STATIC_DRAW);
 
-  glViewport(0, 0, server->width, server->height);
-  g_gl.initialized = 1;
-  DS_LOGI("Zero-Flicker Hardware Presenter initialized (%dx%d)", server->width, server->height);
   return 0;
+}
+
+static int ensure_surface(struct ds_server *server) {
+  if (g_gl.surface != EGL_NO_SURFACE) return 0;
+  if (!server->window) return -1;
+
+  g_gl.surface = eglCreateWindowSurface(g_gl.display, g_gl.config, server->window, NULL);
+  if (g_gl.surface == EGL_NO_SURFACE) {
+    DS_LOGE("eglCreateWindowSurface failed");
+    return -1;
+  }
+
+  if (!eglMakeCurrent(g_gl.display, g_gl.surface, g_gl.surface, g_gl.context)) {
+    DS_LOGE("eglMakeCurrent failed");
+    eglDestroySurface(g_gl.display, g_gl.surface);
+    g_gl.surface = EGL_NO_SURFACE;
+    return -1;
+  }
+
+  glViewport(0, 0, server->width, server->height);
+  return 0;
+}
+
+static int init_gl(struct ds_server *server) {
+  if (ensure_context(server) < 0) return -1;
+  return ensure_surface(server);
+}
+
+/* Drop the EGL surface without touching the context. The caller must hold
+ * server->lock, or the event thread must already be stopped. */
+void ds_presenter_detach(struct ds_server *server) {
+  (void)server;
+  if (g_gl.display == EGL_NO_DISPLAY) return;
+  eglMakeCurrent(g_gl.display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+  if (g_gl.surface != EGL_NO_SURFACE) {
+    eglDestroySurface(g_gl.display, g_gl.surface);
+    g_gl.surface = EGL_NO_SURFACE;
+  }
 }
 
 void ds_presenter_init(struct ds_server *server) {

@@ -11,6 +11,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef __ANDROID__
+#include <android/native_window.h>
+#endif
+
 static void *server_event_thread(void *arg) {
   struct ds_server *server = arg;
   DS_LOGI("Wayland Server event loop thread started");
@@ -36,6 +40,10 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
   server->height = height;
   server->refresh_mhz = refresh_mhz;
   server->window = window;
+  if (socket_dir) {
+    strncpy(server->sock_dir, socket_dir, sizeof(server->sock_dir) - 1);
+    server->sock_dir[sizeof(server->sock_dir) - 1] = '\0';
+  }
 
   server->display = wl_display_create();
   if (!server->display) {
@@ -91,6 +99,41 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
   return server;
 }
 
+/* Swap the native window without touching the display or its clients.
+ * Callers must hold server->lock: the event thread presents under it. */
+void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
+                             int width, int height) {
+  if (!server) return;
+
+  if (server->window && server->window != win) {
+    ANativeWindow_release(server->window);
+  }
+  server->window = win;
+  server->width = width;
+  server->height = height;
+  if (server->output) {
+    server->output->width = width;
+    server->output->height = height;
+  }
+
+  /* Force the EGL surface to be recreated for the new window */
+  ds_presenter_detach(server);
+  ds_xdg_shell_resize_all(server);
+  DS_LOGI("Wayland surface attached (%dx%d)", width, height);
+}
+
+/* Drop the native window but keep clients connected for instant resume. */
+void ds_server_detach_window(struct ds_server *server) {
+  if (!server) return;
+
+  ds_presenter_detach(server);
+  if (server->window) {
+    ANativeWindow_release(server->window);
+    server->window = NULL;
+  }
+  DS_LOGI("Wayland surface detached, display kept alive");
+}
+
 void ds_server_destroy(struct ds_server *server) {
   if (!server) return;
 
@@ -103,6 +146,13 @@ void ds_server_destroy(struct ds_server *server) {
   }
 
   pthread_join(server->loop_thread, NULL);
+
+  /* Event thread is gone, safe to drop GL and window without the lock */
+  ds_presenter_detach(server);
+  if (server->window) {
+    ANativeWindow_release(server->window);
+    server->window = NULL;
+  }
 
   if (server->output) {
     if (server->output->global) wl_global_destroy(server->output->global);

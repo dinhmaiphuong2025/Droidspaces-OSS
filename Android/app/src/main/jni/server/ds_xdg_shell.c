@@ -261,3 +261,31 @@ int ds_xdg_shell_init(struct ds_server *server) {
                                                 server, wm_base_bind);
   return server->xdg_wm_base_global ? 0 : -1;
 }
+
+/* Tell every mapped toplevel the new size so nested compositors relayout
+ * instead of keeping a stale fullscreen window. */
+void ds_xdg_shell_resize_all(struct ds_server *server) {
+  if (!server) return;
+
+  struct ds_surface *surf;
+  wl_list_for_each(surf, &server->surfaces, link) {
+    struct ds_xdg_surface *xdg_surf = surf->xdg_surf;
+    if (!xdg_surf || !xdg_surf->toplevel || !xdg_surf->toplevel->resource) continue;
+    if (!xdg_surf->configured) continue;
+
+    struct wl_array states;
+    wl_array_init(&states);
+    uint32_t *state = wl_array_add(&states, sizeof(uint32_t));
+    if (state) *state = XDG_TOPLEVEL_STATE_ACTIVATED;
+    state = wl_array_add(&states, sizeof(uint32_t));
+    if (state) *state = XDG_TOPLEVEL_STATE_FULLSCREEN;
+
+    xdg_toplevel_send_configure(xdg_surf->toplevel->resource, server->width,
+                               server->height, &states);
+    wl_array_release(&states);
+
+    uint32_t serial = wl_display_next_serial(server->display);
+    xdg_surf->last_serial = serial;
+    xdg_surface_send_configure(xdg_surf->resource, serial);
+  }
+}
