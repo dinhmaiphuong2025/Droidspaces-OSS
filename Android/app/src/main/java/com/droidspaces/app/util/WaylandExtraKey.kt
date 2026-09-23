@@ -30,6 +30,7 @@ fun defaultWaylandExtraKeys(): List<List<WaylandExtraKey>> = listOf(
         WaylandExtraKey("Tab", 15),
         WaylandExtraKey("Ctrl", 29, type = WaylandExtraKey.TYPE_MODIFIER),
         WaylandExtraKey("Alt", 56, type = WaylandExtraKey.TYPE_MODIFIER),
+        WaylandExtraKey("Super", 125, type = WaylandExtraKey.TYPE_MODIFIER),
         WaylandExtraKey("⌨", type = WaylandExtraKey.TYPE_SYSTEM, systemCommand = "toggle_ime")
     ),
     listOf(

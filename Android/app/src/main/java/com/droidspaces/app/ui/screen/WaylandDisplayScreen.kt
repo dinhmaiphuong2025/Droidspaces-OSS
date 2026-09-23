@@ -20,9 +20,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -66,6 +70,7 @@ enum class InputMode {
     DIRECT_TOUCH
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @SuppressLint("ClickableViewAccessibility")
 @Composable
 fun WaylandDisplayScreen(
@@ -76,7 +81,7 @@ fun WaylandDisplayScreen(
     val context = LocalContext.current
     var showControls by remember { mutableStateOf(false) }
     var inputMode by remember { mutableStateOf(InputMode.TOUCHPAD) }
-    var isKeyboardVisible by remember { mutableStateOf(false) }
+    val isKeyboardVisible = WindowInsets.isImeVisible
 
     val prefs = remember(context) {
         com.droidspaces.app.util.PreferencesManager.getInstance(context)
@@ -141,10 +146,8 @@ fun WaylandDisplayScreen(
                 if (insetsController != null) {
                     if (isKeyboardVisible) {
                         insetsController.hide(WindowInsetsCompat.Type.ime())
-                        isKeyboardVisible = false
                     } else {
                         insetsController.show(WindowInsetsCompat.Type.ime())
-                        isKeyboardVisible = true
                     }
                 }
             }
@@ -159,13 +162,19 @@ fun WaylandDisplayScreen(
         }
     }
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .imePadding()
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 SurfaceView(ctx).apply {
                     holder.addCallback(object : SurfaceHolder.Callback {
@@ -483,10 +492,8 @@ fun WaylandDisplayScreen(
                             if (insetsController != null) {
                                 if (isKeyboardVisible) {
                                     insetsController.hide(WindowInsetsCompat.Type.ime())
-                                    isKeyboardVisible = false
                                 } else {
                                     insetsController.show(WindowInsetsCompat.Type.ime())
-                                    isKeyboardVisible = true
                                 }
                             }
                         },
@@ -502,7 +509,7 @@ fun WaylandDisplayScreen(
             }
         }
 
-        // Extra keys bar docked at the bottom, rides above Gboard via imePadding
+        // Extra keys bar docked at the bottom, directly above Gboard
         WaylandExtraKeysDock(
             rows = extraKeyRows,
             modifiers = modifiers,
@@ -519,22 +526,20 @@ fun WaylandDisplayScreen(
                 }
             },
             onEdit = { showExtraEditor = true },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .imePadding()
+            modifier = Modifier.fillMaxWidth()
         )
+    }
 
-        if (showExtraEditor) {
-            WaylandExtraKeysDialog(
-                initial = extraKeyRows,
-                onDismiss = { showExtraEditor = false },
-                onSave = { updated ->
-                    modifiers = releaseAllModifiers(modifiers)
-                    prefs.saveWaylandExtraKeys(updated)
-                    extraKeyRows = updated.ifEmpty { prefs.getWaylandExtraKeys() }
-                    showExtraEditor = false
-                }
-            )
-        }
+    if (showExtraEditor) {
+        WaylandExtraKeysDialog(
+            initial = extraKeyRows,
+            onDismiss = { showExtraEditor = false },
+            onSave = { updated ->
+                modifiers = releaseAllModifiers(modifiers)
+                prefs.saveWaylandExtraKeys(updated)
+                extraKeyRows = updated.ifEmpty { prefs.getWaylandExtraKeys() }
+                showExtraEditor = false
+            }
+        )
     }
 }

@@ -149,26 +149,30 @@ fun WaylandExtraKeysBar(
     val haptic = LocalHapticFeedback.current
 
     Surface(
-        modifier = modifier,
-        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.88f),
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.92f),
         tonalElevation = 0.dp,
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(12.dp),
         border = BorderStroke(
             1.dp,
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             Column(
-                modifier = Modifier.weight(1f, fill = false),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 rows.forEachIndexed { rowIdx, row ->
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         row.forEach { key ->
@@ -181,11 +185,12 @@ fun WaylandExtraKeysBar(
 
                             Box(
                                 modifier = Modifier
-                                    .height(40.dp)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .weight(1f)
+                                    .height(32.dp)
+                                    .clip(RoundedCornerShape(6.dp))
                                     .background(
                                         when {
-                                            isLocked -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
+                                            isLocked -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
                                             isActive -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                                             else -> MaterialTheme.colorScheme.surfaceContainerHigh
                                         }
@@ -201,13 +206,12 @@ fun WaylandExtraKeysBar(
                                                 onKeyLongPress(key)
                                             }
                                         )
-                                    }
-                                    .padding(horizontal = 10.dp),
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = key.label,
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = if (isActive || isLocked) FontWeight.Bold else FontWeight.SemiBold,
                                     color = when {
                                         isLocked -> MaterialTheme.colorScheme.primary
@@ -221,12 +225,19 @@ fun WaylandExtraKeysBar(
                     }
                 }
             }
-            IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(width = 30.dp, height = if (rows.size > 1) 67.dp else 32.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .clickable { onEdit() },
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = Icons.Default.Edit,
                     contentDescription = stringResource(R.string.wayland_extra_keys_edit),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(18.dp)
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp)
                 )
             }
         }
@@ -245,9 +256,9 @@ fun WaylandExtraKeysDock(
 ) {
     Box(
         modifier = modifier
+            .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 8.dp),
+            .padding(horizontal = 4.dp, vertical = 2.dp),
         contentAlignment = Alignment.Center
     ) {
         WaylandExtraKeysBar(
@@ -255,7 +266,8 @@ fun WaylandExtraKeysDock(
             modifiers = modifiers,
             onKeyAction = onKeyAction,
             onKeyLongPress = onKeyLongPress,
-            onEdit = onEdit
+            onEdit = onEdit,
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }

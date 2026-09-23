@@ -5,11 +5,26 @@
  */
 
 #include "ds_server.h"
+#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+
+#ifndef MFD_CLOEXEC
+#define MFD_CLOEXEC 0x0001U
+#endif
+#ifndef MFD_ALLOW_SEALING
+#define MFD_ALLOW_SEALING 0x0002U
+#endif
+#ifndef F_ADD_SEALS
+#define F_ADD_SEALS (1024 + 9)
+#endif
+#ifndef F_SEAL_SHRINK
+#define F_SEAL_SHRINK 0x0002
+#endif
 
 /* Minimal xkb keymap for clients */
 static const char minimal_keymap[] =
@@ -22,24 +37,55 @@ static const char minimal_keymap[] =
     "};\n";
 
 static int create_keymap_fd(size_t *size_out) {
-  size_t len = sizeof(minimal_keymap);
-#if defined(HAVE_MEMFD_CREATE)
-  int fd = memfd_create("ds_keymap", MFD_CLOEXEC);
-#else
+  /* strlen, not sizeof: Rust's CString::new in winit rejects trailing '\0' */
+  size_t len = strlen(minimal_keymap);
   int fd = -1;
+
+#if defined(__NR_memfd_create)
+  fd = (int)syscall(__NR_memfd_create, "ds_keymap", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+#elif defined(SYS_memfd_create)
+  fd = (int)syscall(SYS_memfd_create, "ds_keymap", MFD_CLOEXEC | MFD_ALLOW_SEALING);
 #endif
+
   if (fd < 0) {
-    char path[] = "/data/local/tmp/ds_km_XXXXXX";
+    char path[] = "/data/data/com.droidspaces.app/cache/ds_km_XXXXXX";
     fd = mkstemp(path);
     if (fd >= 0) unlink(path);
   }
-  if (fd < 0) return -1;
+  if (fd < 0) {
+    char path[] = "/data/user/0/com.droidspaces.app/cache/ds_km_XXXXXX";
+    fd = mkstemp(path);
+    if (fd >= 0) unlink(path);
+  }
+  if (fd < 0) {
+    DS_LOGE("Failed to create keymap fd: %s", strerror(errno));
+    return -1;
+  }
 
-  if (write(fd, minimal_keymap, len) != (ssize_t)len) {
+  if (ftruncate(fd, (off_t)len) < 0) {
+    DS_LOGE("ftruncate keymap fd failed: %s", strerror(errno));
     close(fd);
     return -1;
   }
+
+  void *p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (p == MAP_FAILED) {
+    if (write(fd, minimal_keymap, len) != (ssize_t)len) {
+      DS_LOGE("write keymap fd failed: %s", strerror(errno));
+      close(fd);
+      return -1;
+    }
+  } else {
+    memcpy(p, minimal_keymap, len);
+    munmap(p, len);
+  }
+
+#if defined(F_ADD_SEALS) && defined(F_SEAL_SHRINK)
+  fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK);
+#endif
+
   *size_out = len;
+  DS_LOGI("Keymap fd created successfully: fd=%d, size=%zu", fd, len);
   return fd;
 }
 
@@ -129,9 +175,15 @@ static void seat_get_keyboard(struct wl_client *client, struct wl_resource *reso
   wl_resource_set_implementation(kbd, &ds_keyboard_impl, seat, keyboard_resource_destroy);
   seat->keyboard_resource = kbd;
 
+  if (seat->keymap_fd < 0) {
+    seat->keymap_fd = create_keymap_fd(&seat->keymap_size);
+  }
+
   if (seat->keymap_fd >= 0) {
     wl_keyboard_send_keymap(kbd, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
                             seat->keymap_fd, (uint32_t)seat->keymap_size);
+  } else {
+    DS_LOGE("CRITICAL: seat->keymap_fd < 0, keymap could not be sent to client!");
   }
 
   /* winit and Smithay require repeat_info on version >= 4; without it the
