@@ -110,7 +110,7 @@ static void upload_shm_buffer(struct ds_buffer *buf) {
   if (data && stride >= buf->width * 4) {
     glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
     if (stride == buf->width * 4) {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, buf->width, buf->height, 0,
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
                    GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
     } else {
       /* Padded rows: repack into a tight buffer, ES2 has no row length */
@@ -120,7 +120,7 @@ static void upload_shm_buffer(struct ds_buffer *buf) {
         for (int y = 0; y < buf->height; y++) {
           memcpy(tight + (size_t)y * row, data + (size_t)y * stride, row);
         }
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, buf->width, buf->height, 0,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
                      GL_BGRA_EXT, GL_UNSIGNED_BYTE, tight);
         free(tight);
       }
@@ -148,7 +148,8 @@ static const char *fragment_shader_source =
     "varying vec2 v_texcoord;\n"
     "uniform sampler2D u_texture;\n"
     "void main() {\n"
-    "    gl_FragColor = texture2D(u_texture, v_texcoord);\n"
+    "    vec4 c = texture2D(u_texture, v_texcoord);\n"
+    "    gl_FragColor = vec4(c.rgb, 1.0);\n"
     "}\n";
 
 static GLuint compile_shader(GLenum type, const char *source) {
