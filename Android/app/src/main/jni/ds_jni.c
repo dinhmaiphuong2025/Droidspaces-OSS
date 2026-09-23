@@ -97,6 +97,7 @@ JNIEXPORT void JNICALL JNI_METHOD(nativeSendTouch)(
   (void)env; (void)thiz;
   if (!g_server) return;
 
+  /* Seat functions now lock internally */
   switch (action) {
     case 0: /* ACTION_DOWN */
     case 5: /* ACTION_POINTER_DOWN */

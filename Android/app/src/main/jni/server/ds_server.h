@@ -134,7 +134,8 @@ struct ds_seat {
 
   int pointer_entered;
   int keyboard_entered;
-  struct ds_surface *focus_surface;
+  struct ds_surface *pointer_focus;
+  struct ds_surface *keyboard_focus;
 
   float cursor_x;
   float cursor_y;
@@ -203,5 +204,8 @@ void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button, uint
 void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis, float value);
 
 void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state);
+
+/* Notify seat that a surface was destroyed so it can send leave and reset focus */
+void ds_seat_surface_destroyed(struct ds_server *server, struct ds_surface *surf);
 
 #endif /* DS_SERVER_H */

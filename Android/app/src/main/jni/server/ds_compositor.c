@@ -194,12 +194,8 @@ static void surface_resource_destroy(struct wl_resource *resource) {
     surf->server->active_surface = NULL;
   }
 
-  /* Focus dies with the surface so the next one gets a fresh enter */
-  if (surf->server && surf->server->seat && surf->server->seat->focus_surface == surf) {
-    surf->server->seat->focus_surface = NULL;
-    surf->server->seat->pointer_entered = 0;
-    surf->server->seat->keyboard_entered = 0;
-  }
+  /* Send leave events and reset focus tracking in the seat */
+  ds_seat_surface_destroyed(surf->server, surf);
 
   if (surf->current_buffer && surf->current_buffer->is_shm) {
     if (surf->pending_buffer == surf->current_buffer) {

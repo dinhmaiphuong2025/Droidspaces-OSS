@@ -386,39 +386,91 @@ class PreferencesManager private constructor(context: Context) {
     }
 
     // Wayland extra keys bar for the display screen.
-    // Stored as a JSON array string: [{"label":"Esc","code":1,"sticky":false},...]
+    // Stored as a JSON object: {"rows":[[{key},{key},...],[...]]}
 
-    fun getWaylandExtraKeys(): List<WaylandExtraKey> {
+    fun getWaylandExtraKeys(): List<List<WaylandExtraKey>> {
         val raw = prefs.getString(KEY_WAYLAND_EXTRA_KEYS, null) ?: return defaultWaylandExtraKeys()
         return try {
-            val arr = org.json.JSONArray(raw)
+            val root = org.json.JSONObject(raw)
+            val rowsArr = root.getJSONArray("rows")
             buildList {
-                for (i in 0 until arr.length()) {
-                    val obj = arr.getJSONObject(i)
-                    add(
-                        WaylandExtraKey(
-                            label = obj.optString("label", ""),
-                            code = obj.optInt("code", 0),
-                            sticky = obj.optBoolean("sticky", false)
-                        )
-                    )
+                for (r in 0 until rowsArr.length()) {
+                    val row = rowsArr.getJSONArray(r)
+                    val keys = buildList {
+                        for (k in 0 until row.length()) {
+                            val obj = row.getJSONObject(k)
+                            val comboCodes = buildList {
+                                val arr = obj.optJSONArray("combo_keys")
+                                if (arr != null) for (i in 0 until arr.length()) add(arr.getInt(i))
+                            }
+                            add(
+                                WaylandExtraKey(
+                                    label = obj.optString("label", ""),
+                                    code = obj.optInt("code", 0),
+                                    sticky = obj.optBoolean("sticky", false),
+                                    type = obj.optString("type", WaylandExtraKey.TYPE_KEY),
+                                    repeat = obj.optBoolean("repeat", false),
+                                    comboKeys = comboCodes,
+                                    text = obj.optString("text", ""),
+                                    systemCommand = obj.optString("command", "")
+                                )
+                            )
+                        }
+                    }.filter { it.label.isNotBlank() }
+                    if (keys.isNotEmpty()) add(keys)
                 }
-            }.filter { it.label.isNotBlank() && it.code in 1..255 }
+            }.ifEmpty { defaultWaylandExtraKeys() }
         } catch (e: Exception) {
-            defaultWaylandExtraKeys()
+            // Migrate old flat JSON array format
+            try {
+                val arr = org.json.JSONArray(raw)
+                val flat = buildList {
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        add(
+                            WaylandExtraKey(
+                                label = obj.optString("label", ""),
+                                code = obj.optInt("code", 0),
+                                sticky = obj.optBoolean("sticky", false),
+                                type = if (obj.optBoolean("sticky", false))
+                                    WaylandExtraKey.TYPE_MODIFIER else WaylandExtraKey.TYPE_KEY
+                            )
+                        )
+                    }
+                }.filter { it.label.isNotBlank() }
+                if (flat.isEmpty()) defaultWaylandExtraKeys()
+                else listOf(flat)
+            } catch (e2: Exception) {
+                defaultWaylandExtraKeys()
+            }
         }
     }
 
-    fun saveWaylandExtraKeys(keys: List<WaylandExtraKey>) {
-        val arr = org.json.JSONArray()
-        keys.filter { it.label.isNotBlank() && it.code in 1..255 }.forEach { key ->
-            arr.put(org.json.JSONObject().apply {
-                put("label", key.label)
-                put("code", key.code)
-                put("sticky", key.sticky)
-            })
+    fun saveWaylandExtraKeys(rows: List<List<WaylandExtraKey>>) {
+        val root = org.json.JSONObject()
+        val rowsArr = org.json.JSONArray()
+        rows.forEach { row ->
+            val keyArr = org.json.JSONArray()
+            row.filter { it.label.isNotBlank() }.forEach { key ->
+                keyArr.put(org.json.JSONObject().apply {
+                    put("label", key.label)
+                    put("type", key.type)
+                    if (key.code > 0) put("code", key.code)
+                    if (key.sticky) put("sticky", true)
+                    if (key.repeat) put("repeat", true)
+                    if (key.comboKeys.isNotEmpty()) {
+                        put("combo_keys", org.json.JSONArray().apply {
+                            key.comboKeys.forEach { put(it) }
+                        })
+                    }
+                    if (key.text.isNotBlank()) put("text", key.text)
+                    if (key.systemCommand.isNotBlank()) put("command", key.systemCommand)
+                })
+            }
+            if (keyArr.length() > 0) rowsArr.put(keyArr)
         }
-        prefs.edit().putString(KEY_WAYLAND_EXTRA_KEYS, arr.toString()).apply()
+        root.put("rows", rowsArr)
+        prefs.edit().putString(KEY_WAYLAND_EXTRA_KEYS, root.toString()).apply()
     }
 
     /**

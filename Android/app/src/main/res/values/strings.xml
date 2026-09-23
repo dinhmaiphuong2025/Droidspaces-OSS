@@ -327,10 +327,6 @@
     <string name="wayland_extra_keys_save">Save</string>
     <string name="wayland_extra_keys_reset">Reset defaults</string>
     <string name="wayland_extra_keys_edit">Edit extra keys</string>
-    <string name="wayland_extra_key_label">Label</string>
-    <string name="wayland_extra_key_code">Key code</string>
-    <string name="wayland_extra_key_sticky">Sticky (latch)</string>
-    <string name="wayland_extra_key_preset">Preset</string>
     <string name="add_bind_mount">Add Bind Mount</string>
     <string name="enter_container_path">Enter Container Path</string>
     <string name="container_path_placeholder">e.g. /mnt/sdcard</string>

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -56,6 +57,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.droidspaces.app.ui.wayland.WaylandNative
+import com.droidspaces.app.util.WaylandExtraKey
 import kotlin.math.abs
 import kotlin.math.hypot
 
@@ -79,10 +81,8 @@ fun WaylandDisplayScreen(
     val prefs = remember(context) {
         com.droidspaces.app.util.PreferencesManager.getInstance(context)
     }
-    var extraKeys by remember {
-        mutableStateOf(prefs.getWaylandExtraKeys())
-    }
-    var latchedCodes by remember { mutableStateOf(setOf<Int>()) }
+    var extraKeyRows by remember { mutableStateOf(prefs.getWaylandExtraKeys()) }
+    var modifiers by remember { mutableStateOf(mapOf<Int, ModifierState>()) }
     var showExtraEditor by remember { mutableStateOf(false) }
 
     val activity = context as? Activity
@@ -90,7 +90,6 @@ fun WaylandDisplayScreen(
         activity?.let { WindowCompat.getInsetsController(it.window, it.window.decorView) }
     }
 
-    // Immersive full-screen mode: hide system status bar and navigation bar
     DisposableEffect(activity) {
         if (insetsController != null) {
             val prevBehavior = insetsController.systemBarsBehavior
@@ -101,10 +100,12 @@ fun WaylandDisplayScreen(
             onDispose {
                 insetsController.systemBarsBehavior = prevBehavior
                 insetsController.show(WindowInsetsCompat.Type.systemBars())
+                modifiers = releaseAllModifiers(modifiers)
                 WaylandNative.nativeDestroySurface()
             }
         } else {
             onDispose {
+                modifiers = releaseAllModifiers(modifiers)
                 WaylandNative.nativeDestroySurface()
             }
         }
@@ -114,11 +115,11 @@ fun WaylandDisplayScreen(
         if (showControls) {
             showControls = false
         } else {
+            modifiers = releaseAllModifiers(modifiers)
             onNavigateBack()
         }
     }
 
-    // Touchpad state tracker
     val touchSlop = remember { ViewConfiguration.get(context).scaledTouchSlop.toFloat() }
     var screenW by remember { mutableStateOf(1440f) }
     var screenH by remember { mutableStateOf(3200f) }
@@ -133,6 +134,31 @@ fun WaylandDisplayScreen(
     var twoFingerStartY by remember { mutableStateOf(0f) }
     var isLeftButtonHeld by remember { mutableStateOf(false) }
 
+    // System command handler for extra keys
+    val handleSystemCommand: (String) -> Unit = { cmd ->
+        when (cmd) {
+            "toggle_ime" -> {
+                if (insetsController != null) {
+                    if (isKeyboardVisible) {
+                        insetsController.hide(WindowInsetsCompat.Type.ime())
+                        isKeyboardVisible = false
+                    } else {
+                        insetsController.show(WindowInsetsCompat.Type.ime())
+                        isKeyboardVisible = true
+                    }
+                }
+            }
+            "mouse_left" -> {
+                WaylandNative.nativeSendPointerButton(0x110, 1)
+                WaylandNative.nativeSendPointerButton(0x110, 0)
+            }
+            "mouse_right" -> {
+                WaylandNative.nativeSendPointerButton(0x111, 1)
+                WaylandNative.nativeSendPointerButton(0x111, 0)
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -143,9 +169,7 @@ fun WaylandDisplayScreen(
             factory = { ctx ->
                 SurfaceView(ctx).apply {
                     holder.addCallback(object : SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: SurfaceHolder) {
-                            // Handled in surfaceChanged once dimensions are measured
-                        }
+                        override fun surfaceCreated(holder: SurfaceHolder) {}
 
                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
                             if (w <= 0 || h <= 0) return
@@ -177,14 +201,12 @@ fun WaylandDisplayScreen(
                     })
 
                     setOnTouchListener { _, event ->
-                        // 3-finger tap toggles the top header controls
                         if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount >= 3) {
                             showControls = !showControls
                             return@setOnTouchListener true
                         }
 
                         if (inputMode == InputMode.TOUCHPAD) {
-                            // --- LAPTOP TOUCHPAD MODE ---
                             when (event.actionMasked) {
                                 MotionEvent.ACTION_DOWN -> {
                                     startTouchX = event.x
@@ -215,18 +237,16 @@ fun WaylandDisplayScreen(
                                         val currentY = (event.getY(0) + event.getY(1)) / 2f
                                         val deltaY = currentY - twoFingerStartY
                                         if (abs(deltaY) > 8f) {
-                                            // Vertical mouse wheel scroll
                                             WaylandNative.nativeSendPointerAxis(0, -deltaY * 0.15f, 0)
                                             twoFingerStartY = currentY
                                         }
                                     }
                                 }
                                 MotionEvent.ACTION_POINTER_UP -> {
-                                    // Quick 2-finger tap without significant move -> Right Click
                                     if (event.pointerCount == 2 && !hasMovedPastSlop) {
                                         val elapsed = SystemClock.uptimeMillis() - touchDownTime
                                         if (elapsed < 350) {
-                                            WaylandNative.nativeSendPointerButton(0x111, 1) // BTN_RIGHT
+                                            WaylandNative.nativeSendPointerButton(0x111, 1)
                                             WaylandNative.nativeSendPointerButton(0x111, 0)
                                         }
                                     }
@@ -236,17 +256,15 @@ fun WaylandDisplayScreen(
                                         isLeftButtonHeld = false
                                         WaylandNative.nativeSendPointerButton(0x110, 0)
                                     } else if (!hasMovedPastSlop && event.pointerCount == 1) {
-                                        // Quick single tap -> Left Click
                                         val elapsed = SystemClock.uptimeMillis() - touchDownTime
                                         if (elapsed < 250) {
-                                            WaylandNative.nativeSendPointerButton(0x110, 1) // BTN_LEFT
+                                            WaylandNative.nativeSendPointerButton(0x110, 1)
                                             WaylandNative.nativeSendPointerButton(0x110, 0)
                                         }
                                     }
                                 }
                             }
                         } else {
-                            // --- DIRECT TOUCH MODE ---
                             when (event.actionMasked) {
                                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                                     val pointerIndex = event.actionIndex
@@ -281,7 +299,7 @@ fun WaylandDisplayScreen(
             }
         )
 
-        // Top Header Controls (Animated on 3-finger tap or close)
+        // Top Header Controls
         AnimatedVisibility(
             visible = showControls,
             enter = fadeIn(),
@@ -358,10 +376,8 @@ fun WaylandDisplayScreen(
             }
         }
 
-        // Right-edge Touchpad / Control HUD Pill.
-        // Vertical on purpose: the bottom dock now holds the extra keys bar,
-        // so the controls move aside instead of stacking. The action pill
-        // pattern stays horizontal everywhere else, do not copy this shape.
+        // Right-edge Control Pill (vertical).
+        // The bottom dock holds extra keys, so the controls move to the side.
         Surface(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -380,7 +396,7 @@ fun WaylandDisplayScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Mode Toggle: Touchpad vs Direct Touch
+                // Mode Toggle
                 Box(
                     modifier = Modifier
                         .size(38.dp)
@@ -414,12 +430,8 @@ fun WaylandDisplayScreen(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "L",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Text("L", fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface)
                 }
 
                 // Right Mouse Button
@@ -434,22 +446,17 @@ fun WaylandDisplayScreen(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "R",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Text("R", fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface)
                 }
 
-                // Super / Windows key button (Toggles Niri Overview)
+                // Super key
                 Box(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(RoundedCornerShape(19.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .clickable {
-                            // Linux evdev KEY_LEFTMETA = 125
                             WaylandNative.nativeSendKey(125, 1)
                             WaylandNative.nativeSendKey(125, 0)
                         },
@@ -463,7 +470,7 @@ fun WaylandDisplayScreen(
                     )
                 }
 
-                // Keyboard IME Toggle
+                // Keyboard Toggle
                 Box(
                     modifier = Modifier
                         .size(38.dp)
@@ -495,21 +502,36 @@ fun WaylandDisplayScreen(
             }
         }
 
+        // Extra keys bar docked at the bottom, rides above Gboard via imePadding
         WaylandExtraKeysDock(
-            keys = extraKeys,
-            latchedCodes = latchedCodes,
-            onTapKey = { key -> latchedCodes = tapWaylandExtraKey(key, latchedCodes) },
+            rows = extraKeyRows,
+            modifiers = modifiers,
+            onKeyAction = { key ->
+                modifiers = dispatchExtraKey(
+                    key = key,
+                    modifiers = modifiers,
+                    onSystemCommand = handleSystemCommand
+                )
+            },
+            onKeyLongPress = { key ->
+                if (key.type == WaylandExtraKey.TYPE_MODIFIER) {
+                    modifiers = lockModifier(key.code, modifiers)
+                }
+            },
             onEdit = { showExtraEditor = true },
-            modifier = Modifier.align(Alignment.BottomCenter)
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .imePadding()
         )
 
         if (showExtraEditor) {
             WaylandExtraKeysDialog(
-                initial = extraKeys,
+                initial = extraKeyRows,
                 onDismiss = { showExtraEditor = false },
                 onSave = { updated ->
+                    modifiers = releaseAllModifiers(modifiers)
                     prefs.saveWaylandExtraKeys(updated)
-                    extraKeys = updated.ifEmpty { prefs.getWaylandExtraKeys() }
+                    extraKeyRows = updated.ifEmpty { prefs.getWaylandExtraKeys() }
                     showExtraEditor = false
                 }
             )
