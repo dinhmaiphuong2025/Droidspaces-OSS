@@ -36,6 +36,12 @@ static void buffer_resource_destroy(struct wl_resource *resource) {
     AHardwareBuffer_release(buf->ahwb);
     buf->ahwb = NULL;
   }
+  for (int i = 0; i < buf->dmabuf_num_planes && i < MAX_PLANES; i++) {
+    if (buf->dmabuf_fds[i] >= 0) {
+      close(buf->dmabuf_fds[i]);
+      buf->dmabuf_fds[i] = -1;
+    }
+  }
   free(buf);
 }
 
@@ -89,6 +95,20 @@ static void create_buffer_from_params(struct wl_client *client, struct wl_resour
   buf->stride = params->strides[0];
   buf->format = format;
   buf->is_dmabuf = 1;
+  wl_list_init(&buf->destroy_listener.link);
+
+  /* Take over the plane fds so they survive the params object */
+  buf->dmabuf_num_planes = params->plane_count > MAX_PLANES ? MAX_PLANES : params->plane_count;
+  for (int i = 0; i < MAX_PLANES; i++) {
+    buf->dmabuf_fds[i] = -1;
+  }
+  for (int i = 0; i < buf->dmabuf_num_planes; i++) {
+    buf->dmabuf_fds[i] = params->fds[i];
+    buf->dmabuf_offsets[i] = params->offsets[i];
+    buf->dmabuf_strides[i] = params->strides[i];
+    buf->dmabuf_modifiers[i] = params->modifiers[i];
+    params->fds[i] = -1;
+  }
 
   /* Create wl_buffer resource */
   buf->resource = wl_resource_create(client, &wl_buffer_interface, 1, buffer_id);
@@ -99,6 +119,9 @@ static void create_buffer_from_params(struct wl_client *client, struct wl_resour
   }
 
   wl_resource_set_implementation(buf->resource, &ds_buffer_impl, buf, buffer_resource_destroy);
+
+  /* Tell the client the buffer is ready for attach */
+  zwp_linux_buffer_params_v1_send_created(params_resource, buf->resource);
 }
 
 static void params_create(struct wl_client *client, struct wl_resource *resource,

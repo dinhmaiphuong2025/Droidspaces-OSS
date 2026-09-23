@@ -46,18 +46,25 @@ static inline void AHardwareBuffer_release(AHardwareBuffer *b) { (void)b; }
 #define DRM_FORMAT_XBGR8888 0x34324258
 
 struct ds_server;
+struct ds_surface;
 
 /* Buffer representation */
 struct ds_buffer {
   struct wl_resource *resource;
   AHardwareBuffer *ahwb;
   struct wl_shm_buffer *shm;
+  int dmabuf_fds[4];
+  int dmabuf_num_planes;
+  uint32_t dmabuf_offsets[4];
+  uint32_t dmabuf_strides[4];
+  uint64_t dmabuf_modifiers[4];
   int width;
   int height;
   int stride;
   uint32_t format;
   int is_dmabuf;
   int is_shm;
+  struct ds_surface *surface;
   struct wl_listener destroy_listener;
 };
 

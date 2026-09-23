@@ -28,6 +28,62 @@ struct ds_gl_context {
 static struct ds_gl_context g_gl;
 static int g_first_frame_logged = 0;
 
+static PFNEGLCREATEIMAGEKHRPROC g_eglCreateImageKHR = NULL;
+static PFNEGLDESTROYIMAGEKHRPROC g_eglDestroyImageKHR = NULL;
+static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC g_glEGLImageTargetTexture2DOES = NULL;
+
+static void resolve_image_procs(void) {
+  static int resolved = 0;
+  if (resolved) return;
+  resolved = 1;
+  g_eglCreateImageKHR =
+      (PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
+  g_eglDestroyImageKHR =
+      (PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
+  g_glEGLImageTargetTexture2DOES = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress(
+      "glEGLImageTargetTexture2DOES");
+}
+
+/* Import one single-plane linear dmabuf into the presentation texture.
+ * Multi-plane or tiled buffers are skipped, the old frame stays up. */
+static void upload_dmabuf_buffer(struct ds_buffer *buf) {
+  if (!buf || buf->dmabuf_num_planes != 1 || buf->dmabuf_fds[0] < 0) return;
+  if (buf->width <= 0 || buf->height <= 0) return;
+  if (buf->dmabuf_modifiers[0] != 0) return;
+  if (buf->format != DRM_FORMAT_ARGB8888 && buf->format != DRM_FORMAT_XRGB8888) {
+    return;
+  }
+
+  resolve_image_procs();
+  if (!g_eglCreateImageKHR || !g_eglDestroyImageKHR || !g_glEGLImageTargetTexture2DOES) {
+    return;
+  }
+
+  EGLint attrs[] = {
+      EGL_WIDTH, buf->width,
+      EGL_HEIGHT, buf->height,
+      EGL_LINUX_DRM_FOURCC_EXT, (EGLint)buf->format,
+      EGL_DMA_BUF_PLANE0_FD_EXT, buf->dmabuf_fds[0],
+      EGL_DMA_BUF_PLANE0_OFFSET_EXT, (EGLint)buf->dmabuf_offsets[0],
+      EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLint)buf->dmabuf_strides[0],
+      EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT, (EGLint)(buf->dmabuf_modifiers[0] & 0xffffffffu),
+      EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT, (EGLint)(buf->dmabuf_modifiers[0] >> 32),
+      EGL_NONE,
+  };
+
+  EGLImageKHR img = g_eglCreateImageKHR(g_gl.display, EGL_NO_CONTEXT,
+                                       EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
+  if (img == EGL_NO_IMAGE_KHR) return;
+
+  glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
+  g_glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, img);
+  g_eglDestroyImageKHR(g_gl.display, img);
+
+  if (!g_first_frame_logged) {
+    g_first_frame_logged = 1;
+    DS_LOGI("presented first dmabuf frame (%dx%d)", buf->width, buf->height);
+  }
+}
 /* Copy one SHM buffer into the presentation texture. Only ARGB/XRGB8888
  * are handled; anything else keeps the previous frame instead of garbage. */
 static void upload_shm_buffer(struct ds_buffer *buf) {
@@ -209,6 +265,8 @@ void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *s
   /* Upload client pixels. Without this the quad stays black. */
   if (surf->current_buffer->is_shm && surf->current_buffer->shm) {
     upload_shm_buffer(surf->current_buffer);
+  } else if (surf->current_buffer->is_dmabuf) {
+    upload_dmabuf_buffer(surf->current_buffer);
   }
 
   glUseProgram(g_gl.program);

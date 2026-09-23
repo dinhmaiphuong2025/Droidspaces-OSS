@@ -8,6 +8,33 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* A client-owned buffer can vanish while the surface still references it.
+ * Disarm first so a later destroy never leaves a dangling pointer. */
+static void buffer_destroy_notify(struct wl_listener *listener, void *data) {
+  (void)data;
+  struct ds_buffer *buf = wl_container_of(listener, buf, destroy_listener);
+  struct ds_surface *surf = buf->surface;
+  buf->surface = NULL;
+  if (!surf) return;
+  if (surf->current_buffer == buf) surf->current_buffer = NULL;
+  if (surf->pending_buffer == buf) surf->pending_buffer = NULL;
+  surf->is_mapped = 0;
+}
+
+static void disarm_buffer(struct ds_buffer *buf) {
+  if (!buf || buf->is_shm) return;
+  wl_list_remove(&buf->destroy_listener.link);
+  wl_list_init(&buf->destroy_listener.link);
+  buf->surface = NULL;
+}
+
+static void arm_buffer(struct ds_surface *surf, struct ds_buffer *buf) {
+  if (!buf || buf->is_shm || !buf->resource || buf->surface == surf) return;
+  buf->surface = surf;
+  buf->destroy_listener.notify = buffer_destroy_notify;
+  wl_resource_add_destroy_listener(buf->resource, &buf->destroy_listener);
+}
+
 static void surface_destroy(struct wl_client *client, struct wl_resource *resource) {
   (void)client;
   wl_resource_destroy(resource);
@@ -77,11 +104,15 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
 
   /* Apply attached buffer */
   if (surf->pending_buffer) {
-    if (surf->current_buffer && surf->current_buffer != surf->pending_buffer &&
-        surf->current_buffer->is_shm) {
-      ds_shm_free_buffer(surf->current_buffer);
+    if (surf->current_buffer && surf->current_buffer != surf->pending_buffer) {
+      if (surf->current_buffer->is_shm) {
+        ds_shm_free_buffer(surf->current_buffer);
+      } else {
+        disarm_buffer(surf->current_buffer);
+      }
     }
     surf->current_buffer = surf->pending_buffer;
+    arm_buffer(surf, surf->current_buffer);
     surf->width = surf->pending_buffer->width;
     surf->height = surf->pending_buffer->height;
     surf->is_mapped = 1;
@@ -169,10 +200,9 @@ static void surface_resource_destroy(struct wl_resource *resource) {
     }
     ds_shm_free_buffer(surf->current_buffer);
     surf->current_buffer = NULL;
-  }
-  if (surf->pending_buffer && surf->pending_buffer->is_shm) {
-    ds_shm_free_buffer(surf->pending_buffer);
-    surf->pending_buffer = NULL;
+  } else if (surf->current_buffer) {
+    disarm_buffer(surf->current_buffer);
+    surf->current_buffer = NULL;
   }
 
   wl_list_remove(&surf->link);
