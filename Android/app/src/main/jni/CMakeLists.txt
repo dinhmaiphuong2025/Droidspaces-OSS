@@ -35,6 +35,7 @@ set(PROTOCOLS_SRCS
 
 set(SERVER_SRCS
     server/ds_compositor.c
+    server/ds_shm.c
     server/ds_xdg_shell.c
     server/ds_dmabuf.c
     server/ds_output.c

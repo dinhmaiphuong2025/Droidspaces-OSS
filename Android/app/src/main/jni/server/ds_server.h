@@ -51,11 +51,13 @@ struct ds_server;
 struct ds_buffer {
   struct wl_resource *resource;
   AHardwareBuffer *ahwb;
+  struct wl_shm_buffer *shm;
   int width;
   int height;
   int stride;
   uint32_t format;
   int is_dmabuf;
+  int is_shm;
   struct wl_listener destroy_listener;
 };
 
@@ -161,6 +163,10 @@ int ds_dmabuf_init(struct ds_server *server);
 int ds_output_init(struct ds_server *server, int width, int height, int refresh_mhz);
 int ds_seat_init(struct ds_server *server);
 int ds_viewporter_init(struct ds_server *server);
+
+/* SHM buffer adapter (ds_shm.c) */
+struct ds_buffer *ds_shm_wrap_buffer(struct wl_resource *buffer_resource);
+void ds_shm_free_buffer(struct ds_buffer *buf);
 
 /* Presenter API */
 void ds_presenter_init(struct ds_server *server);

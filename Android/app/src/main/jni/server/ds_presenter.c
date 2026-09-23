@@ -10,6 +10,7 @@
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 struct ds_gl_context {
@@ -25,6 +26,44 @@ struct ds_gl_context {
 };
 
 static struct ds_gl_context g_gl;
+static int g_first_frame_logged = 0;
+
+/* Copy one SHM buffer into the presentation texture. Only ARGB/XRGB8888
+ * are handled; anything else keeps the previous frame instead of garbage. */
+static void upload_shm_buffer(struct ds_buffer *buf) {
+  if (!buf || !buf->shm || buf->width <= 0 || buf->height <= 0) return;
+  if (buf->format != WL_SHM_FORMAT_ARGB8888 && buf->format != WL_SHM_FORMAT_XRGB8888) {
+    return;
+  }
+
+  wl_shm_buffer_begin_access(buf->shm);
+  uint8_t *data = wl_shm_buffer_get_data(buf->shm);
+  int32_t stride = wl_shm_buffer_get_stride(buf->shm);
+  if (data && stride >= buf->width * 4) {
+    glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
+    if (stride == buf->width * 4) {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, buf->width, buf->height, 0,
+                   GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
+    } else {
+      /* Padded rows: repack into a tight buffer, ES2 has no row length */
+      size_t row = (size_t)buf->width * 4;
+      uint8_t *tight = malloc(row * (size_t)buf->height);
+      if (tight) {
+        for (int y = 0; y < buf->height; y++) {
+          memcpy(tight + (size_t)y * row, data + (size_t)y * stride, row);
+        }
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, buf->width, buf->height, 0,
+                     GL_BGRA_EXT, GL_UNSIGNED_BYTE, tight);
+        free(tight);
+      }
+    }
+    if (!g_first_frame_logged) {
+      g_first_frame_logged = 1;
+      DS_LOGI("presented first client frame (%dx%d)", buf->width, buf->height);
+    }
+  }
+  wl_shm_buffer_end_access(buf->shm);
+}
 
 static const char *vertex_shader_source =
     "attribute vec4 a_position;\n"
@@ -166,6 +205,11 @@ void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *s
   glViewport(0, 0, server->width, server->height);
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT);
+
+  /* Upload client pixels. Without this the quad stays black. */
+  if (surf->current_buffer->is_shm && surf->current_buffer->shm) {
+    upload_shm_buffer(surf->current_buffer);
+  }
 
   glUseProgram(g_gl.program);
 

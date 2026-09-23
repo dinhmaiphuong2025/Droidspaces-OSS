@@ -20,8 +20,20 @@ static void surface_attach(struct wl_client *client, struct wl_resource *resourc
   if (!surf) return;
 
   if (buffer_resource) {
-    surf->pending_buffer = wl_resource_get_user_data(buffer_resource);
+    /* Prefer the SHM wrapper; dmabuf buffers carry our descriptor already */
+    struct ds_buffer *wrapped = ds_shm_wrap_buffer(buffer_resource);
+    if (wrapped) {
+      if (surf->pending_buffer && surf->pending_buffer->is_shm) {
+        ds_shm_free_buffer(surf->pending_buffer);
+      }
+      surf->pending_buffer = wrapped;
+    } else {
+      surf->pending_buffer = wl_resource_get_user_data(buffer_resource);
+    }
   } else {
+    if (surf->pending_buffer && surf->pending_buffer->is_shm) {
+      ds_shm_free_buffer(surf->pending_buffer);
+    }
     surf->pending_buffer = NULL;
   }
   surf->pending_sx = sx;
@@ -65,6 +77,10 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
 
   /* Apply attached buffer */
   if (surf->pending_buffer) {
+    if (surf->current_buffer && surf->current_buffer != surf->pending_buffer &&
+        surf->current_buffer->is_shm) {
+      ds_shm_free_buffer(surf->current_buffer);
+    }
     surf->current_buffer = surf->pending_buffer;
     surf->width = surf->pending_buffer->width;
     surf->height = surf->pending_buffer->height;
@@ -73,6 +89,12 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
 
     /* Present directly via ASurfaceControl zero-flicker presenter */
     ds_presenter_present_surface(surf->server, surf);
+
+    /* Release the buffer so double-buffered clients keep submitting frames.
+     * Without this, clients stall after their buffers are all busy. */
+    if (surf->current_buffer->resource) {
+      wl_buffer_send_release(surf->current_buffer->resource);
+    }
   }
 
   /* Trigger any pending frame callbacks with current monotonic time */
@@ -139,6 +161,18 @@ static void surface_resource_destroy(struct wl_resource *resource) {
 
   if (surf->server && surf->server->active_surface == surf) {
     surf->server->active_surface = NULL;
+  }
+
+  if (surf->current_buffer && surf->current_buffer->is_shm) {
+    if (surf->pending_buffer == surf->current_buffer) {
+      surf->pending_buffer = NULL;
+    }
+    ds_shm_free_buffer(surf->current_buffer);
+    surf->current_buffer = NULL;
+  }
+  if (surf->pending_buffer && surf->pending_buffer->is_shm) {
+    ds_shm_free_buffer(surf->pending_buffer);
+    surf->pending_buffer = NULL;
   }
 
   wl_list_remove(&surf->link);
