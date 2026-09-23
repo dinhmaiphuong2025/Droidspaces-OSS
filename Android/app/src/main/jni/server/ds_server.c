@@ -142,27 +142,24 @@ void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
   if (!server) return;
 
   int window_changed = (server->window != win);
-  if (window_changed) {
-    if (server->window) {
+  int size_changed = (server->width != width || server->height != height);
+
+  if (window_changed || size_changed) {
+    if (server->window && window_changed) {
       ANativeWindow_release(server->window);
     }
     ds_presenter_detach(server);
     server->window = win;
   }
 
-  int size_changed = (server->width != width || server->height != height);
   server->width = width;
   server->height = height;
-  if (server->output) {
-    server->output->width = width;
-    server->output->height = height;
-  }
 
   if (size_changed) {
-    ds_xdg_shell_resize_all(server);
+    ds_server_enqueue_resize(server, width, height);
   }
   DS_LOGI("Wayland surface attached (%dx%d)%s", width, height,
-          window_changed ? " [new window]" : " [resized]");
+          window_changed ? " [new window]" : (size_changed ? " [resized]" : " [unchanged]"));
 }
 
 /* Drop the native window but keep clients connected for instant resume. */

@@ -310,7 +310,7 @@ static int ensure_context(struct ds_server *server) {
 
   glGenBuffers(1, &g_gl.vbo);
   glBindBuffer(GL_ARRAY_BUFFER, g_gl.vbo);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(quad_data), quad_data, GL_STATIC_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(quad_data), quad_data, GL_DYNAMIC_DRAW);
 
   DS_LOGI("presenter GL ready (%dx%d)", server->width, server->height);
   return 0;
@@ -377,7 +377,31 @@ void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *s
 
   glUseProgram(g_gl.program);
 
+  /* Aspect ratio correction: fit buffer into viewport without stretching */
+  float qx = 1.0f;
+  float qy = 1.0f;
+  if (surf->width > 0 && surf->height > 0 && server->width > 0 && server->height > 0) {
+    float buf_aspect = (float)surf->width / (float)surf->height;
+    float win_aspect = (float)server->width / (float)server->height;
+    if (buf_aspect > win_aspect * 1.001f) {
+      /* Buffer is wider than window: letterbox top and bottom */
+      qy = win_aspect / buf_aspect;
+    } else if (buf_aspect < win_aspect * 0.999f) {
+      /* Buffer is taller than window: pillarbox left and right */
+      qx = buf_aspect / win_aspect;
+    }
+  }
+
+  const GLfloat quad_data[] = {
+      -qx, -qy, 0.0f, 1.0f,
+       qx, -qy, 1.0f, 1.0f,
+      -qx,  qy, 0.0f, 0.0f,
+       qx,  qy, 1.0f, 0.0f,
+  };
+
   glBindBuffer(GL_ARRAY_BUFFER, g_gl.vbo);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quad_data), quad_data);
+
   glEnableVertexAttribArray(0);
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), (void *)0);
 

@@ -536,6 +536,16 @@ void ds_seat_dispatch_queue(struct ds_server *server) {
         case DS_INPUT_TOUCH_FRAME:
           dispatch_touch_frame(server);
           break;
+        case DS_INPUT_RESIZE:
+          server->width = batch[i].resize.width;
+          server->height = batch[i].resize.height;
+          if (server->output) {
+            server->output->width = batch[i].resize.width;
+            server->output->height = batch[i].resize.height;
+            ds_output_send_current_mode(server->output);
+          }
+          ds_xdg_shell_resize_all(server);
+          break;
       }
     }
   }
@@ -601,6 +611,14 @@ void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state) {
   struct ds_input_event ev = {
     .type = DS_INPUT_KEY,
     .key = { .key = key, .state = state }
+  };
+  enqueue_input_event(server, &ev);
+}
+
+void ds_server_enqueue_resize(struct ds_server *server, int width, int height) {
+  struct ds_input_event ev = {
+    .type = DS_INPUT_RESIZE,
+    .resize = { .width = width, .height = height }
   };
   enqueue_input_event(server, &ev);
 }

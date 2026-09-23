@@ -122,6 +122,7 @@ struct ds_xdg_toplevel {
 struct ds_output {
   struct ds_server *server;
   struct wl_global *global;
+  struct wl_list resources;
   int width;
   int height;
   int refresh_mhz;
@@ -148,6 +149,30 @@ struct ds_seat {
 
   float cursor_x;
   float cursor_y;
+};
+
+enum ds_input_type {
+  DS_INPUT_KEY = 1,
+  DS_INPUT_POINTER_MOTION,
+  DS_INPUT_POINTER_BUTTON,
+  DS_INPUT_POINTER_AXIS,
+  DS_INPUT_TOUCH_DOWN,
+  DS_INPUT_TOUCH_MOTION,
+  DS_INPUT_TOUCH_UP,
+  DS_INPUT_TOUCH_FRAME,
+  DS_INPUT_RESIZE,
+};
+
+struct ds_input_event {
+  enum ds_input_type type;
+  union {
+    struct { uint32_t key; uint32_t state; } key;
+    struct { float x; float y; float dx; float dy; } pointer_motion;
+    struct { uint32_t button; uint32_t state; } pointer_button;
+    struct { uint32_t axis; float value; } pointer_axis;
+    struct { int32_t id; float x; float y; } touch;
+    struct { int32_t width; int32_t height; } resize;
+  };
 };
 
 /* Main Server context */
@@ -186,28 +211,6 @@ struct ds_server {
   uint16_t input_tail;
 };
 
-enum ds_input_type {
-  DS_INPUT_KEY = 1,
-  DS_INPUT_POINTER_MOTION,
-  DS_INPUT_POINTER_BUTTON,
-  DS_INPUT_POINTER_AXIS,
-  DS_INPUT_TOUCH_DOWN,
-  DS_INPUT_TOUCH_MOTION,
-  DS_INPUT_TOUCH_UP,
-  DS_INPUT_TOUCH_FRAME,
-};
-
-struct ds_input_event {
-  enum ds_input_type type;
-  union {
-    struct { uint32_t key; uint32_t state; } key;
-    struct { float x; float y; float dx; float dy; } pointer_motion;
-    struct { uint32_t button; uint32_t state; } pointer_button;
-    struct { uint32_t axis; float value; } pointer_axis;
-    struct { int32_t id; float x; float y; } touch;
-  };
-};
-
 void ds_seat_dispatch_queue(struct ds_server *server);
 
 /* Subsystem initializers */
@@ -215,6 +218,7 @@ int ds_compositor_init(struct ds_server *server);
 int ds_xdg_shell_init(struct ds_server *server);
 int ds_dmabuf_init(struct ds_server *server);
 int ds_output_init(struct ds_server *server, int width, int height, int refresh_mhz);
+void ds_output_send_current_mode(struct ds_output *output);
 int ds_seat_init(struct ds_server *server);
 int ds_viewporter_init(struct ds_server *server);
 
@@ -232,6 +236,7 @@ void ds_presenter_detach(struct ds_server *server);
 void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
                              int width, int height);
 void ds_server_detach_window(struct ds_server *server);
+void ds_server_enqueue_resize(struct ds_server *server, int width, int height);
 void ds_xdg_shell_resize_all(struct ds_server *server);
 
 /* Input API (called from JNI) */
