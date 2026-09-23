@@ -56,6 +56,7 @@ static void upload_dmabuf_buffer(struct ds_buffer *buf) {
 
   resolve_image_procs();
   if (!g_eglCreateImageKHR || !g_eglDestroyImageKHR || !g_glEGLImageTargetTexture2DOES) {
+    DS_LOGE("dmabuf import procs missing");
     return;
   }
 
@@ -73,7 +74,10 @@ static void upload_dmabuf_buffer(struct ds_buffer *buf) {
 
   EGLImageKHR img = g_eglCreateImageKHR(g_gl.display, EGL_NO_CONTEXT,
                                        EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
-  if (img == EGL_NO_IMAGE_KHR) return;
+  if (img == EGL_NO_IMAGE_KHR) {
+    DS_LOGE("eglCreateImage failed: 0x%x", eglGetError());
+    return;
+  }
 
   glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
   g_glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, img);
