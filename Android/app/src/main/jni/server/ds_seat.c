@@ -94,6 +94,7 @@ static int create_keymap_fd(size_t *size_out) {
 
 static void pointer_resource_destroy(struct wl_resource *resource) {
   struct ds_seat *seat = wl_resource_get_user_data(resource);
+  DS_LOGW("seat: pointer_resource_destroy called for %p (seat->pointer_resource=%p)", resource, seat ? seat->pointer_resource : NULL);
   if (seat && seat->pointer_resource == resource) {
     seat->pointer_resource = NULL;
     seat->pointer_entered = 0;
@@ -103,6 +104,7 @@ static void pointer_resource_destroy(struct wl_resource *resource) {
 
 static void keyboard_resource_destroy(struct wl_resource *resource) {
   struct ds_seat *seat = wl_resource_get_user_data(resource);
+  DS_LOGW("seat: keyboard_resource_destroy called for %p (seat->keyboard_resource=%p)", resource, seat ? seat->keyboard_resource : NULL);
   if (seat && seat->keyboard_resource == resource) {
     seat->keyboard_resource = NULL;
     seat->keyboard_entered = 0;
@@ -112,6 +114,7 @@ static void keyboard_resource_destroy(struct wl_resource *resource) {
 
 static void touch_resource_destroy(struct wl_resource *resource) {
   struct ds_seat *seat = wl_resource_get_user_data(resource);
+  DS_LOGW("seat: touch_resource_destroy called for %p (seat->touch_resource=%p)", resource, seat ? seat->touch_resource : NULL);
   if (seat && seat->touch_resource == resource)
     seat->touch_resource = NULL;
 }
@@ -211,6 +214,7 @@ static void seat_get_touch(struct wl_client *client, struct wl_resource *resourc
 
 static void seat_release(struct wl_client *client, struct wl_resource *resource) {
   (void)client;
+  DS_LOGW("seat: client requested seat_release for %p", resource);
   wl_resource_destroy(resource);
 }
 
@@ -221,6 +225,14 @@ static const struct wl_seat_interface ds_seat_impl = {
     .release = seat_release,
 };
 
+static void seat_resource_destroy(struct wl_resource *resource) {
+  struct ds_seat *seat = wl_resource_get_user_data(resource);
+  DS_LOGW("seat: seat_resource_destroy called for %p (seat->seat_resource=%p)", resource, seat ? seat->seat_resource : NULL);
+  if (seat && seat->seat_resource == resource) {
+    seat->seat_resource = NULL;
+  }
+}
+
 static void seat_bind(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
   struct ds_seat *seat = data;
   struct wl_resource *resource = wl_resource_create(client, &wl_seat_interface, version, id);
@@ -229,8 +241,9 @@ static void seat_bind(struct wl_client *client, void *data, uint32_t version, ui
     return;
   }
 
-  wl_resource_set_implementation(resource, &ds_seat_impl, seat, NULL);
+  wl_resource_set_implementation(resource, &ds_seat_impl, seat, seat_resource_destroy);
   seat->seat_resource = resource;
+  DS_LOGI("seat: client bound wl_seat resource=%p version=%u", resource, version);
 
   uint32_t caps = WL_SEAT_CAPABILITY_TOUCH | WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD;
   wl_seat_send_capabilities(resource, caps);
