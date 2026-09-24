@@ -23,6 +23,8 @@ struct ds_gl_context {
   GLuint program;
   GLuint texture_id;
   GLuint vbo;
+  int tex_w;
+  int tex_h;
   int initialized;
 };
 
@@ -45,6 +47,22 @@ static void resolve_image_procs(void) {
       (PFNEGLDESTROYIMAGEKHRPROC)eglGetProcAddress("eglDestroyImageKHR");
   g_glEGLImageTargetTexture2DOES = (PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress(
       "glEGLImageTargetTexture2DOES");
+}
+
+/* Steady-state frames reuse the texture storage so the driver skips
+ * reallocating a full 1440x3200 image on every commit. A size change
+ * falls back to TexImage and records the new allocation. */
+static void upload_tight_pixels(int width, int height, const uint8_t *data) {
+  glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
+  if (g_gl.tex_w == width && g_gl.tex_h == height) {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+                    GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
+  } else {
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, width, height, 0,
+                 GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
+    g_gl.tex_w = width;
+    g_gl.tex_h = height;
+  }
 }
 
 /* Import one single-plane linear dmabuf into the presentation texture.
@@ -70,10 +88,8 @@ static void upload_dmabuf_mmap_fallback(struct ds_buffer *buf) {
   }
 
   uint8_t *data = (uint8_t *)map + buf->dmabuf_offsets[0];
-  glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
   if (stride == (size_t)buf->width * 4) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
-                 GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
+    upload_tight_pixels(buf->width, buf->height, data);
   } else {
     size_t row = (size_t)buf->width * 4;
     uint8_t *tight = malloc(row * (size_t)buf->height);
@@ -81,8 +97,7 @@ static void upload_dmabuf_mmap_fallback(struct ds_buffer *buf) {
       for (int y = 0; y < buf->height; y++) {
         memcpy(tight + (size_t)y * row, data + (size_t)y * stride, row);
       }
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
-                   GL_BGRA_EXT, GL_UNSIGNED_BYTE, tight);
+      upload_tight_pixels(buf->width, buf->height, tight);
       free(tight);
     }
   }
@@ -162,10 +177,8 @@ static void upload_shm_buffer(struct ds_buffer *buf) {
   uint8_t *data = wl_shm_buffer_get_data(buf->shm);
   int32_t stride = wl_shm_buffer_get_stride(buf->shm);
   if (data && stride >= buf->width * 4) {
-    glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
     if (stride == buf->width * 4) {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
-                   GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
+      upload_tight_pixels(buf->width, buf->height, data);
     } else {
       /* Padded rows: repack into a tight buffer, ES2 has no row length */
       size_t row = (size_t)buf->width * 4;
@@ -174,8 +187,7 @@ static void upload_shm_buffer(struct ds_buffer *buf) {
         for (int y = 0; y < buf->height; y++) {
           memcpy(tight + (size_t)y * row, data + (size_t)y * stride, row);
         }
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
-                     GL_BGRA_EXT, GL_UNSIGNED_BYTE, tight);
+        upload_tight_pixels(buf->width, buf->height, tight);
         free(tight);
       }
     }
@@ -368,9 +380,15 @@ void ds_presenter_init(struct ds_server *server) {
   (void)server;
 }
 
+static uint64_t g_present_total_ns = 0;
+static int g_present_count = 0;
+
 void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *surf) {
   if (!server || !surf || !surf->current_buffer) return;
   if (init_gl(server) < 0) return;
+
+  struct timespec t0;
+  clock_gettime(CLOCK_MONOTONIC, &t0);
 
   eglMakeCurrent(g_gl.display, g_gl.surface, g_gl.surface, g_gl.context);
 
@@ -432,4 +450,15 @@ void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *s
     DS_LOGE("eglSwapBuffers failed");
   }
   log_gl_error("present");
+
+  /* Throttled timing so logcat shows real present cost without spamming */
+  struct timespec t1;
+  clock_gettime(CLOCK_MONOTONIC, &t1);
+  g_present_total_ns += (uint64_t)(t1.tv_sec - t0.tv_sec) * 1000000000ull +
+                        (uint64_t)(t1.tv_nsec - t0.tv_nsec);
+  if (++g_present_count >= 120) {
+    DS_LOGI("presenter: 120 frames avg %.1fms", (double)g_present_total_ns / 120000000.0);
+    g_present_total_ns = 0;
+    g_present_count = 0;
+  }
 }

@@ -158,7 +158,11 @@ void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
   server->width = width;
   server->height = height;
 
-  if (size_changed) {
+  /* A new window starts with an empty EGL surface. Niri only redraws on
+   * configure, so ask for one even when the size did not change. Without
+   * this the screen stays black after back-and-return until the user
+   * happens to trigger a redraw. */
+  if (size_changed || window_changed) {
     ds_server_enqueue_resize(server, width, height);
   }
   DS_LOGI("Wayland surface attached (%dx%d)%s", width, height,
