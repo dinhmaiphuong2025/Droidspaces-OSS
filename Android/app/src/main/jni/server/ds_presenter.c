@@ -266,14 +266,19 @@ static int ensure_context(struct ds_server *server) {
     return -1;
   }
 
+  EGLint format = 0;
+  if (eglGetConfigAttrib(g_gl.display, g_gl.config, EGL_NATIVE_VISUAL_ID, &format)) {
+    ANativeWindow_setBuffersGeometry(server->window, 0, 0, format);
+  }
+
   g_gl.surface = eglCreateWindowSurface(g_gl.display, g_gl.config, server->window, NULL);
   if (g_gl.surface == EGL_NO_SURFACE) {
-    DS_LOGE("eglCreateWindowSurface failed");
+    DS_LOGE("eglCreateWindowSurface failed: 0x%x", eglGetError());
     return -1;
   }
 
   if (!eglMakeCurrent(g_gl.display, g_gl.surface, g_gl.surface, g_gl.context)) {
-    DS_LOGE("eglMakeCurrent failed");
+    DS_LOGE("eglMakeCurrent failed: 0x%x", eglGetError());
     return -1;
   }
 
@@ -320,14 +325,19 @@ static int ensure_surface(struct ds_server *server) {
   if (g_gl.surface != EGL_NO_SURFACE) return 0;
   if (!server->window) return -1;
 
+  EGLint format = 0;
+  if (eglGetConfigAttrib(g_gl.display, g_gl.config, EGL_NATIVE_VISUAL_ID, &format)) {
+    ANativeWindow_setBuffersGeometry(server->window, 0, 0, format);
+  }
+
   g_gl.surface = eglCreateWindowSurface(g_gl.display, g_gl.config, server->window, NULL);
   if (g_gl.surface == EGL_NO_SURFACE) {
-    DS_LOGE("eglCreateWindowSurface failed");
+    DS_LOGE("eglCreateWindowSurface failed: 0x%x", eglGetError());
     return -1;
   }
 
   if (!eglMakeCurrent(g_gl.display, g_gl.surface, g_gl.surface, g_gl.context)) {
-    DS_LOGE("eglMakeCurrent failed");
+    DS_LOGE("eglMakeCurrent failed: 0x%x", eglGetError());
     eglDestroySurface(g_gl.display, g_gl.surface);
     g_gl.surface = EGL_NO_SURFACE;
     return -1;

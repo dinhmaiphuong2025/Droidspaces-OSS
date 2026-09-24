@@ -144,12 +144,15 @@ void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
   int window_changed = (server->window != win);
   int size_changed = (server->width != width || server->height != height);
 
-  if (window_changed || size_changed) {
-    if (server->window && window_changed) {
+  if (window_changed) {
+    if (server->window) {
       ANativeWindow_release(server->window);
     }
     ds_presenter_detach(server);
     server->window = win;
+  } else if (win) {
+    /* Release extra reference acquired by ANativeWindow_fromSurface */
+    ANativeWindow_release(win);
   }
 
   server->width = width;
