@@ -32,6 +32,41 @@ void ds_wayland_daemon_stop(struct ds_config *cfg) {
   (void)cfg;
 }
 
+/* Directory segment for a container's isolated display socket. Mirrors
+ * ValidationUtils.waylandSocketDir() in the Android app: only letters,
+ * digits, '_' and '-' survive, so ".." collapses and traversal is
+ * impossible. Empty result falls back to "default". */
+static void ds_wayland_socket_dir(const char *name, char *out, size_t size) {
+  if (!out || size == 0)
+    return;
+  size_t j = 0;
+  if (name) {
+    for (size_t i = 0; name[i] != '\0' && j + 1 < size; i++) {
+      char c = name[i];
+      int keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '_' || c == '-';
+      if (keep)
+        out[j++] = c;
+    }
+  }
+  if (j == 0) {
+    const char *fb = "default";
+    size_t k;
+    for (k = 0; k + 1 < size && fb[k] != '\0'; k++)
+      out[k] = fb[k];
+    out[k] = '\0';
+    return;
+  }
+  out[j] = '\0';
+}
+
+void ds_wayland_socket_path(const char *container_name, char *out, size_t size) {
+  char dir[128];
+  ds_wayland_socket_dir(container_name, dir, sizeof(dir));
+  snprintf(out, size, "%s/%s/%s", DS_WAYLAND_SOCK_DIR, dir,
+           DS_WAYLAND_DISPLAY_SOCK);
+}
+
 int ds_setup_wayland_socket(struct ds_config *cfg) {
   if (!cfg || !cfg->wayland || !is_android())
     return 0;
@@ -52,7 +87,14 @@ int ds_setup_wayland_socket(struct ds_config *cfg) {
     ds_warn("[Wayland] failed to bind-mount socket dir: %s", strerror(errno));
   }
 
-  /* Setup symlinks inside container */
+  /* Setup symlinks inside container. They point at this container's own
+   * isolated socket, not the old shared flat one. */
+  char dir[128];
+  ds_wayland_socket_dir(cfg->container_name, dir, sizeof(dir));
+  char target[256];
+  snprintf(target, sizeof(target), "/run/ds-wayland/%s/%s", dir,
+           DS_WAYLAND_DISPLAY_SOCK);
+
   mkdir_p("/run/user/1000", 0700);
   if (chown("/run/user/1000", 1000, 1000) != 0) {
     /* non-fatal */
@@ -62,16 +104,17 @@ int ds_setup_wayland_socket(struct ds_config *cfg) {
   unlink("/run/wayland-0");
   unlink("/run/ds-wayland.sock");
 
-  if (symlink("/run/ds-wayland/wayland-0", "/run/user/1000/wayland-0") != 0) {
+  if (symlink(target, "/run/user/1000/wayland-0") != 0) {
     /* non-fatal */
   }
-  if (symlink("/run/ds-wayland/wayland-0", "/run/wayland-0") != 0) {
+  if (symlink(target, "/run/wayland-0") != 0) {
     /* non-fatal */
   }
-  if (symlink("/run/ds-wayland/wayland-0", "/run/ds-wayland.sock") != 0) {
+  if (symlink(target, "/run/ds-wayland.sock") != 0) {
     /* non-fatal */
   }
 
-  ds_log("[Wayland] directory %s bridged to /run/ds-wayland and symlinked to wayland-0", src);
+  ds_log("[Wayland] directory %s bridged to /run/ds-wayland and symlinked to %s", src,
+         target);
   return 0;
 }
