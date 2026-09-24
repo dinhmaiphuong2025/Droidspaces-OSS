@@ -133,17 +133,14 @@ struct ds_output {
 struct ds_seat {
   struct ds_server *server;
   struct wl_global *global;
-  struct wl_resource *seat_resource;
-
-  struct wl_resource *pointer_resource;
-  struct wl_resource *touch_resource;
-  struct wl_resource *keyboard_resource;
+  struct wl_list base_resources;
+  struct wl_list pointer_resources;
+  struct wl_list touch_resources;
+  struct wl_list keyboard_resources;
 
   int keymap_fd;
   size_t keymap_size;
 
-  int pointer_entered;
-  int keyboard_entered;
   struct ds_surface *pointer_focus;
   struct ds_surface *keyboard_focus;
 

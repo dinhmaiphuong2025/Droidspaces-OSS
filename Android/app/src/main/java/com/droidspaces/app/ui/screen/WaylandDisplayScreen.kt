@@ -259,20 +259,14 @@ fun WaylandDisplayScreen(
         }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .imePadding()
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        ) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
                     WaylandSurfaceView(ctx).apply {
                         surfaceViewRef = this
                         onKeyInput = handleKeyInput
@@ -612,7 +606,6 @@ fun WaylandDisplayScreen(
                 }
             }
         }
-        }
 
         // Extra keys bar docked at the bottom, directly above Gboard
         WaylandExtraKeysDock(
@@ -632,7 +625,10 @@ fun WaylandDisplayScreen(
                 }
             },
             onEdit = { showExtraEditor = true },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .imePadding()
         )
     }
 

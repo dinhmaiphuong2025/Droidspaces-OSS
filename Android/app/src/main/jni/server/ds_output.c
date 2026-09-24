@@ -46,6 +46,11 @@ static void output_bind(struct wl_client *client, void *data, uint32_t version, 
   wl_output_send_mode(resource, flags, output->width, output->height,
                       output->refresh_mhz > 0 ? output->refresh_mhz : 60000);
 
+  if (version >= 4) {
+    wl_output_send_name(resource, "WL-1");
+    wl_output_send_description(resource, "Droidspaces Display");
+  }
+
   if (version >= 2) {
     wl_output_send_done(resource);
   }
@@ -67,6 +72,10 @@ void ds_output_send_current_mode(struct ds_output *output) {
     }
     wl_output_send_mode(resource, flags, output->width, output->height,
                         output->refresh_mhz > 0 ? output->refresh_mhz : 60000);
+    if (wl_resource_get_version(resource) >= 4) {
+      wl_output_send_name(resource, "WL-1");
+      wl_output_send_description(resource, "Droidspaces Display");
+    }
     if (wl_resource_get_version(resource) >= 2) {
       wl_output_send_done(resource);
     }
@@ -84,7 +93,7 @@ int ds_output_init(struct ds_server *server, int width, int height, int refresh_
   output->scale = 1;
   wl_list_init(&output->resources);
 
-  output->global = wl_global_create(server->display, &wl_output_interface, 3,
+  output->global = wl_global_create(server->display, &wl_output_interface, 4,
                                     output, output_bind);
   if (!output->global) {
     free(output);
