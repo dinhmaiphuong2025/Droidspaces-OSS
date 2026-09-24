@@ -67,10 +67,37 @@ static void surface_attach(struct wl_client *client, struct wl_resource *resourc
   surf->pending_sy = sy;
 }
 
+/* Merge one damaged rect into the pending set. The presenter uploads
+ * only this union, so typing in a terminal no longer pushes 18MB. */
+static void damage_union(struct ds_surface *surf, int32_t x, int32_t y,
+                         int32_t width, int32_t height) {
+  if (!surf || width <= 0 || height <= 0) return;
+  if (!surf->pend_damage) {
+    surf->pend_dx = x;
+    surf->pend_dy = y;
+    surf->pend_dw = width;
+    surf->pend_dh = height;
+    surf->pend_damage = 1;
+    return;
+  }
+  int32_t x1 = surf->pend_dx < x ? surf->pend_dx : x;
+  int32_t y1 = surf->pend_dy < y ? surf->pend_dy : y;
+  int32_t x2 = surf->pend_dx + surf->pend_dw > x + width
+                   ? surf->pend_dx + surf->pend_dw
+                   : x + width;
+  int32_t y2 = surf->pend_dy + surf->pend_dh > y + height
+                   ? surf->pend_dy + surf->pend_dh
+                   : y + height;
+  surf->pend_dx = x1;
+  surf->pend_dy = y1;
+  surf->pend_dw = x2 - x1;
+  surf->pend_dh = y2 - y1;
+}
+
 static void surface_damage(struct wl_client *client, struct wl_resource *resource,
                            int32_t x, int32_t y, int32_t width, int32_t height) {
-  (void)client; (void)resource; (void)x; (void)y; (void)width; (void)height;
-  /* Full frame presentation with zero-flicker: we present the committed buffer directly */
+  (void)client;
+  damage_union(wl_resource_get_user_data(resource), x, y, width, height);
 }
 
 static void surface_frame(struct wl_client *client, struct wl_resource *resource,
@@ -95,6 +122,9 @@ static void surface_set_input_region(struct wl_client *client, struct wl_resourc
   (void)client; (void)resource; (void)region_resource;
 }
 
+static void surface_send_frames(struct ds_server *server, struct ds_surface *surf,
+                                uint32_t msec);
+
 static void surface_commit(struct wl_client *client, struct wl_resource *resource) {
   (void)client;
   struct ds_surface *surf = wl_resource_get_user_data(resource);
@@ -116,6 +146,20 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
     surf->width = surf->pending_buffer->width;
     surf->height = surf->pending_buffer->height;
     surf->is_mapped = 1;
+
+    /* Hand the accumulated damage to the presenter. A commit without
+     * damage means a full upload, e.g. the first frame or a resize. */
+    if (surf->pend_damage) {
+      surf->dmg_x = surf->pend_dx;
+      surf->dmg_y = surf->pend_dy;
+      surf->dmg_w = surf->pend_dw;
+      surf->dmg_h = surf->pend_dh;
+      surf->dmg_valid = 1;
+      surf->pend_damage = 0;
+    } else {
+      surf->dmg_valid = 0;
+    }
+
     if (surf->xdg_surf && surf->role != DS_SURFACE_ROLE_CURSOR) {
       surf->server->active_surface = surf;
 
@@ -130,11 +174,27 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
     }
   }
 
-  /* Trigger any pending frame callbacks with current monotonic time */
+  /* Frame callbacks are paced to the output refresh so a client cannot
+   * flood the event thread with full-frame commits. Sporadic frames still
+   * go out immediately, only bursts wait for the next tick. */
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   uint32_t msec = (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+  surface_send_frames(surf->server, surf, msec);
 
+  surf->pending_buffer = NULL;
+  pthread_mutex_unlock(&surf->server->lock);
+}
+
+static uint32_t frame_interval_ms(struct ds_server *server) {
+  if (server && server->refresh_mhz > 0) {
+    uint32_t hz = (uint32_t)server->refresh_mhz / 1000;
+    if (hz > 0) return 1000 / hz;
+  }
+  return 16;
+}
+
+static void flush_frame_callbacks(struct ds_surface *surf, uint32_t msec) {
   struct ds_frame_callback *cb, *tmp;
   wl_list_for_each_safe(cb, tmp, &surf->frame_callback_list, link) {
     wl_callback_send_done(cb->resource, msec);
@@ -142,9 +202,41 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
     wl_list_remove(&cb->link);
     free(cb);
   }
+  surf->last_frame_ms = msec;
+}
 
-  surf->pending_buffer = NULL;
-  pthread_mutex_unlock(&surf->server->lock);
+static void surface_send_frames(struct ds_server *server, struct ds_surface *surf,
+                                uint32_t msec) {
+  if (wl_list_empty(&surf->frame_callback_list)) return;
+  uint32_t interval = frame_interval_ms(server);
+  if (msec - surf->last_frame_ms >= interval) {
+    flush_frame_callbacks(surf, msec);
+    return;
+  }
+  if (server->frame_timer) {
+    wl_event_source_timer_update(server->frame_timer, (int)(interval - (msec - surf->last_frame_ms)));
+  } else {
+    flush_frame_callbacks(surf, msec);
+  }
+}
+
+int ds_frame_timer_tick(void *data) {
+  struct ds_server *server = data;
+  if (!server) return 0;
+
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  uint32_t msec = (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+
+  pthread_mutex_lock(&server->lock);
+  struct ds_surface *surf;
+  wl_list_for_each(surf, &server->surfaces, link) {
+    if (!wl_list_empty(&surf->frame_callback_list)) {
+      flush_frame_callbacks(surf, msec);
+    }
+  }
+  pthread_mutex_unlock(&server->lock);
+  return 0;
 }
 
 static void surface_set_buffer_transform(struct wl_client *client, struct wl_resource *resource,
@@ -159,7 +251,10 @@ static void surface_set_buffer_scale(struct wl_client *client, struct wl_resourc
 
 static void surface_damage_buffer(struct wl_client *client, struct wl_resource *resource,
                                   int32_t x, int32_t y, int32_t width, int32_t height) {
-  (void)client; (void)resource; (void)x; (void)y; (void)width; (void)height;
+  (void)client;
+  /* Buffer coordinates match surface coordinates here: no scale or
+   * transform support exists elsewhere in this server either. */
+  damage_union(wl_resource_get_user_data(resource), x, y, width, height);
 }
 
 static void surface_offset(struct wl_client *client, struct wl_resource *resource,

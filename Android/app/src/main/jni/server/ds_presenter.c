@@ -65,12 +65,46 @@ static void upload_tight_pixels(int width, int height, const uint8_t *data) {
   }
 }
 
+/* Clamp the commit damage to the buffer. Returns 0 when there is nothing
+ * worth uploading, the caller then keeps the previous texture content. */
+static int clamp_damage(struct ds_surface *surf, int width, int height,
+                        int *dx, int *dy, int *dw, int *dh) {
+  if (!surf || !surf->dmg_valid) return 0;
+  int x1 = surf->dmg_x < 0 ? 0 : surf->dmg_x;
+  int y1 = surf->dmg_y < 0 ? 0 : surf->dmg_y;
+  int x2 = surf->dmg_x + surf->dmg_w > width ? width : surf->dmg_x + surf->dmg_w;
+  int y2 = surf->dmg_y + surf->dmg_h > height ? height : surf->dmg_y + surf->dmg_h;
+  *dx = x1;
+  *dy = y1;
+  *dw = x2 - x1;
+  *dh = y2 - y1;
+  return *dw > 0 && *dh > 0;
+}
+
+/* Tight rows with a damage rect go straight into the texture with no copy.
+ * Anything else falls back to a full upload, which also covers the first
+ * frame, resizes, and clients that never send damage. */
+static void upload_subrect(struct ds_surface *surf, int width, int height,
+                           const uint8_t *data, size_t stride) {
+  int dx, dy, dw, dh;
+  if (stride == (size_t)width * 4 && clamp_damage(surf, width, height, &dx, &dy, &dw, &dh) &&
+      (dw < width || dh < height)) {
+    if (g_gl.tex_w == width && g_gl.tex_h == height) {
+      glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
+      glTexSubImage2D(GL_TEXTURE_2D, 0, dx, dy, dw, dh,
+                      GL_BGRA_EXT, GL_UNSIGNED_BYTE, data + (size_t)dy * stride + (size_t)dx * 4);
+      return;
+    }
+  }
+  upload_tight_pixels(width, height, data);
+}
+
 /* Import one single-plane linear dmabuf into the presentation texture.
  * Multi-plane or tiled buffers are skipped, the old frame stays up. */
-static void upload_dmabuf_mmap_fallback(struct ds_buffer *buf);
+static void upload_dmabuf_mmap_fallback(struct ds_surface *surf, struct ds_buffer *buf);
 /* Last resort when EGLImage import fails: map the dma-buf on CPU and
  * upload like SHM. Works for system-memory buffers, not GPU-private ones. */
-static void upload_dmabuf_mmap_fallback(struct ds_buffer *buf) {
+static void upload_dmabuf_mmap_fallback(struct ds_surface *surf, struct ds_buffer *buf) {
   if (!buf || buf->dmabuf_num_planes != 1 || buf->dmabuf_fds[0] < 0) return;
   if (buf->width <= 0 || buf->height <= 0) return;
   if (buf->format != DRM_FORMAT_ARGB8888 && buf->format != DRM_FORMAT_XRGB8888) {
@@ -89,7 +123,7 @@ static void upload_dmabuf_mmap_fallback(struct ds_buffer *buf) {
 
   uint8_t *data = (uint8_t *)map + buf->dmabuf_offsets[0];
   if (stride == (size_t)buf->width * 4) {
-    upload_tight_pixels(buf->width, buf->height, data);
+    upload_subrect(surf, buf->width, buf->height, data, stride);
   } else {
     size_t row = (size_t)buf->width * 4;
     uint8_t *tight = malloc(row * (size_t)buf->height);
@@ -110,7 +144,7 @@ static void upload_dmabuf_mmap_fallback(struct ds_buffer *buf) {
   }
 }
 
-static void upload_dmabuf_buffer(struct ds_buffer *buf) {
+static void upload_dmabuf_buffer(struct ds_surface *surf, struct ds_buffer *buf) {
   if (!buf || buf->dmabuf_num_planes != 1 || buf->dmabuf_fds[0] < 0) return;
   if (buf->width <= 0 || buf->height <= 0) return;
   if (buf->dmabuf_modifiers[0] != 0) return;
@@ -140,7 +174,7 @@ static void upload_dmabuf_buffer(struct ds_buffer *buf) {
                                        EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
   if (img == EGL_NO_IMAGE_KHR) {
     DS_LOGE("eglCreateImage failed: 0x%x", eglGetError());
-    upload_dmabuf_mmap_fallback(buf);
+    upload_dmabuf_mmap_fallback(surf, buf);
     return;
   }
 
@@ -167,7 +201,7 @@ static void log_gl_error(const char *tag) {
 
 /* Copy one SHM buffer into the presentation texture. Only ARGB/XRGB8888
  * are handled; anything else keeps the previous frame instead of garbage. */
-static void upload_shm_buffer(struct ds_buffer *buf) {
+static void upload_shm_buffer(struct ds_surface *surf, struct ds_buffer *buf) {
   if (!buf || !buf->shm || buf->width <= 0 || buf->height <= 0) return;
   if (buf->format != WL_SHM_FORMAT_ARGB8888 && buf->format != WL_SHM_FORMAT_XRGB8888) {
     return;
@@ -178,7 +212,7 @@ static void upload_shm_buffer(struct ds_buffer *buf) {
   int32_t stride = wl_shm_buffer_get_stride(buf->shm);
   if (data && stride >= buf->width * 4) {
     if (stride == buf->width * 4) {
-      upload_tight_pixels(buf->width, buf->height, data);
+      upload_subrect(surf, buf->width, buf->height, data, (size_t)stride);
     } else {
       /* Padded rows: repack into a tight buffer, ES2 has no row length */
       size_t row = (size_t)buf->width * 4;
@@ -398,9 +432,9 @@ void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *s
 
   /* Upload client pixels. Without this the quad stays black. */
   if (surf->current_buffer->is_shm && surf->current_buffer->shm) {
-    upload_shm_buffer(surf->current_buffer);
+    upload_shm_buffer(surf, surf->current_buffer);
   } else if (surf->current_buffer->is_dmabuf) {
-    upload_dmabuf_buffer(surf->current_buffer);
+    upload_dmabuf_buffer(surf, surf->current_buffer);
   }
 
   glUseProgram(g_gl.program);

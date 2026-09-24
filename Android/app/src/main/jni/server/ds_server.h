@@ -95,6 +95,22 @@ struct ds_surface {
   int height;
   int is_mapped;
   struct wl_list link;
+
+  /* Damage accumulated since the last commit, in surface coordinates */
+  int pend_dx;
+  int pend_dy;
+  int pend_dw;
+  int pend_dh;
+  int pend_damage;
+
+  /* Damage consumed by the last commit, read by the presenter */
+  int dmg_x;
+  int dmg_y;
+  int dmg_w;
+  int dmg_h;
+  int dmg_valid;
+
+  uint32_t last_frame_ms;
 };
 
 /* Frame callback wrapper */
@@ -202,6 +218,7 @@ struct ds_server {
   /* Thread-safe input dispatch */
   int input_eventfd;
   struct wl_event_source *input_source;
+  struct wl_event_source *frame_timer;
   pthread_mutex_t input_lock;
   struct ds_input_event input_queue[256];
   uint16_t input_head;
@@ -250,5 +267,8 @@ void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state);
 
 /* Notify seat that a surface was destroyed so it can send leave and reset focus */
 void ds_seat_surface_destroyed(struct ds_server *server, struct ds_surface *surf);
+
+/* Frame timer tick, flushes paced frame callbacks on the event loop */
+int ds_frame_timer_tick(void *data);
 
 #endif /* DS_SERVER_H */

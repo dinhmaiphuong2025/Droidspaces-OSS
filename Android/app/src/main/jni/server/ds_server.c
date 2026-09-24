@@ -48,6 +48,11 @@ static void *server_event_thread(void *arg) {
 
 struct ds_server *ds_server_create(const char *socket_dir, int width, int height,
                                   int refresh_mhz, ANativeWindow *window) {
+  /* SHM full-frame uploads cannot sustain 120Hz phone panels, and the nested
+   * compositor has no use for frames that fast either. Advertise 60Hz so
+   * clients target a frame rate the present path can actually hold. */
+  if (refresh_mhz <= 0 || refresh_mhz > 60000) refresh_mhz = 60000;
+
   struct ds_server *server = calloc(1, sizeof(*server));
   if (!server) return NULL;
 
@@ -79,6 +84,7 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
     server->input_source = wl_event_loop_add_fd(server->loop, server->input_eventfd,
                                                 WL_EVENT_READABLE, on_input_eventfd, server);
   }
+  server->frame_timer = wl_event_loop_add_timer(server->loop, ds_frame_timer_tick, server);
 
   /* Set up socket directory */
   if (socket_dir && strlen(socket_dir) > 0) {
@@ -209,6 +215,10 @@ void ds_server_destroy(struct ds_server *server) {
   if (server->input_source) {
     wl_event_source_remove(server->input_source);
     server->input_source = NULL;
+  }
+  if (server->frame_timer) {
+    wl_event_source_remove(server->frame_timer);
+    server->frame_timer = NULL;
   }
   if (server->input_eventfd >= 0) {
     close(server->input_eventfd);
