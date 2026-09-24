@@ -67,6 +67,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.droidspaces.app.ui.wayland.WaylandNative
+import com.droidspaces.app.util.ValidationUtils
 import com.droidspaces.app.util.WaylandExtraKey
 import com.droidspaces.app.util.WaylandKeyMapper
 import kotlin.math.abs
@@ -289,7 +290,8 @@ fun WaylandDisplayScreen(
                                 }
                                 val refreshMhz = (refreshRate * 1000).toInt()
 
-                                val socketPath = "/data/local/tmp/ds-wayland/wayland-0"
+                                val socketPath = "/data/local/tmp/ds-wayland/" +
+                                    "${ValidationUtils.waylandSocketDir(containerName)}/wayland-0"
                                 WaylandNative.nativeSetSurface(
                                     surface = holder.surface,
                                     width = w,

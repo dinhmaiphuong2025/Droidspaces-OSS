@@ -47,6 +47,20 @@ object ValidationUtils {
         name.isNotEmpty() && name.matches(Regex("^[a-zA-Z0-9_\\s.-]+$"))
 
     /**
+     * Directory name for a container's isolated Wayland socket, used as
+     * `/data/local/tmp/ds-wayland/<this>/wayland-0` so every container gets
+     * its own display server socket instead of sharing one. Only letters,
+     * digits, `_` and `-` survive, so path traversal is impossible by
+     * construction (".." collapses to "default"). The same rule must be
+     * mirrored by any container-side unit waiting on its socket.
+     */
+    fun waylandSocketDir(name: String): String {
+        val safe = normalizeContainerName(name)
+            .filter { it.isLetterOrDigit() || it == '_' || it == '-' }
+        return safe.ifEmpty { "default" }
+    }
+
+    /**
      * Validates hostname: only numbers, letters (lowercase and uppercase), and dashes allowed.
      * Empty is allowed (will use container name as default).
      */
