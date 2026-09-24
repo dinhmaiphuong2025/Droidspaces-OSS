@@ -534,6 +534,26 @@ fun WaylandDisplayScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Back: always visible exit, even with no compositor connected
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable {
+                            modifiers = releaseAllModifiers(modifiers)
+                            onNavigateBack()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
                 // Mode Toggle
                 Box(
                     modifier = Modifier
