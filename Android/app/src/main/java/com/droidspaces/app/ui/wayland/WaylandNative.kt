@@ -24,6 +24,8 @@ object WaylandNative {
 
     external fun nativeDestroySurface()
 
+    external fun nativeGetClientCount(): Int
+
     external fun nativeSendTouch(action: Int, pointerId: Int, x: Float, y: Float)
 
     external fun nativeSendTouchFrame()

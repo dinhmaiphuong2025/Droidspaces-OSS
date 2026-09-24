@@ -215,6 +215,10 @@ struct ds_server {
   struct wl_global *dmabuf_global;
   struct wl_global *viewporter_global;
 
+  /* Connected Wayland clients, tracked for the UI presence check */
+  struct wl_listener client_created_listener;
+  int client_count;
+
   /* Thread-safe input dispatch */
   int input_eventfd;
   struct wl_event_source *input_source;

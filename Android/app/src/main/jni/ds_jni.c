@@ -80,6 +80,20 @@ JNIEXPORT jboolean JNICALL JNI_METHOD(nativeSetSurface)(
   return g_server ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jint JNICALL JNI_METHOD(nativeGetClientCount)(JNIEnv *env, jobject thiz) {
+  (void)env; (void)thiz;
+  int count = 0;
+  pthread_mutex_lock(&g_server_lock);
+  if (g_server) {
+    /* Same locking order as attach/detach: global lock first, server second */
+    pthread_mutex_lock(&g_server->lock);
+    count = g_server->client_count;
+    pthread_mutex_unlock(&g_server->lock);
+  }
+  pthread_mutex_unlock(&g_server_lock);
+  return (jint)count;
+}
+
 JNIEXPORT void JNICALL JNI_METHOD(nativeDestroySurface)(JNIEnv *env, jobject thiz) {
   (void)env; (void)thiz;
   pthread_mutex_lock(&g_server_lock);

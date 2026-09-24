@@ -51,10 +51,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -144,8 +146,32 @@ fun WaylandDisplayScreen(
 ) {
     val context = LocalContext.current
     var showControls by remember { mutableStateOf(false) }
+    var controlsAutoShown by remember { mutableStateOf(false) }
     var inputMode by remember { mutableStateOf(InputMode.TOUCHPAD) }
     val isKeyboardVisible = WindowInsets.isImeVisible
+
+    // Watch the compositor connection. With no client on the display there
+    // is nothing to show, so surface the header (with its back button)
+    // instead of leaving the user trapped on a black immersive screen.
+    LaunchedEffect(Unit) {
+        var wasConnected = true
+        while (true) {
+            delay(2000)
+            val connected = try {
+                WaylandNative.nativeGetClientCount() > 0
+            } catch (_: Throwable) {
+                false
+            }
+            if (!connected && wasConnected) {
+                showControls = true
+                controlsAutoShown = true
+            } else if (connected && controlsAutoShown) {
+                showControls = false
+                controlsAutoShown = false
+            }
+            wasConnected = connected
+        }
+    }
 
     val prefs = remember(context) {
         com.droidspaces.app.util.PreferencesManager.getInstance(context)
@@ -215,6 +241,7 @@ fun WaylandDisplayScreen(
     BackHandler {
         if (showControls) {
             showControls = false
+            controlsAutoShown = false
         } else {
             modifiers = releaseAllModifiers(modifiers)
             onNavigateBack()
@@ -310,6 +337,7 @@ fun WaylandDisplayScreen(
                             view.requestFocus()
                             if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount >= 3) {
                                 showControls = !showControls
+                                controlsAutoShown = false
                                 return@setOnTouchListener true
                             }
 
@@ -470,7 +498,10 @@ fun WaylandDisplayScreen(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(RoundedCornerShape(18.dp))
-                            .clickable { showControls = false },
+                            .clickable {
+                                showControls = false
+                                controlsAutoShown = false
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(

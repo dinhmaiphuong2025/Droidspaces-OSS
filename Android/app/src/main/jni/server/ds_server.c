@@ -33,6 +33,43 @@ static int on_input_eventfd(int fd, uint32_t mask, void *data) {
   return 1;
 }
 
+/* One tracker per connected client. libwayland keeps struct wl_client
+ * opaque, so the count is maintained through create/destroy listeners
+ * instead of walking the client list. */
+struct ds_client_tracker {
+  struct wl_listener destroy_listener;
+  struct ds_server *server;
+};
+
+static void client_destroy_notify(struct wl_listener *listener, void *data) {
+  (void)data;
+  struct ds_client_tracker *tracker =
+      wl_container_of(listener, tracker, destroy_listener);
+  if (tracker->server) {
+    pthread_mutex_lock(&tracker->server->lock);
+    tracker->server->client_count--;
+    pthread_mutex_unlock(&tracker->server->lock);
+  }
+  wl_list_remove(&listener->link);
+  free(tracker);
+}
+
+static void client_created_notify(struct wl_listener *listener, void *data) {
+  struct ds_server *server =
+      wl_container_of(listener, server, client_created_listener);
+  struct wl_client *client = data;
+  struct ds_client_tracker *tracker = calloc(1, sizeof(*tracker));
+  if (!tracker) return;
+  tracker->server = server;
+  tracker->destroy_listener.notify = client_destroy_notify;
+  wl_client_add_destroy_listener(client, &tracker->destroy_listener);
+
+  pthread_mutex_lock(&server->lock);
+  server->client_count++;
+  pthread_mutex_unlock(&server->lock);
+  DS_LOGI("Wayland client connected (%d total)", server->client_count);
+}
+
 static void *server_event_thread(void *arg) {
   struct ds_server *server = arg;
   DS_LOGI("Wayland Server event loop thread started");
@@ -117,6 +154,10 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
 
   /* Initialize core Wayland SHM */
   wl_display_init_shm(server->display);
+
+  server->client_created_listener.notify = client_created_notify;
+  wl_display_add_client_created_listener(server->display,
+                                         &server->client_created_listener);
 
   /* Initialize sub-protocols */
   ds_compositor_init(server);
