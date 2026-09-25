@@ -172,19 +172,18 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
     }
 
     /* Release the buffer so double-buffered clients keep submitting frames.
-     * Without this, clients stall after their buffers are all busy. */
-    if (surf->current_buffer->resource) {
+     * Only send release if the buffer was not already re-attached. */
+    if (surf->current_buffer && surf->current_buffer->resource) {
       wl_buffer_send_release(surf->current_buffer->resource);
     }
   }
 
-  /* Frame callbacks are paced to the output refresh so a client cannot
-   * flood the event thread with full-frame commits. Sporadic frames still
-   * go out immediately, only bursts wait for the next tick. */
+  /* Frame callbacks: for toplevel surfaces, reply immediately so the client
+   * is never throttled to an artificial timer tick. */
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   uint32_t msec = (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
-  surface_send_frames(surf->server, surf, msec);
+  flush_frame_callbacks(surf, msec);
 
   surf->pending_buffer = NULL;
   pthread_mutex_unlock(&surf->server->lock);

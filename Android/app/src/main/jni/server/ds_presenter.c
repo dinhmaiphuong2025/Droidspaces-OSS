@@ -87,15 +87,16 @@ static int clamp_damage(struct ds_surface *surf, int width, int height,
 static void upload_subrect(struct ds_surface *surf, int width, int height,
                            const uint8_t *data, size_t stride) {
   int dx, dy, dw, dh;
+  /* Subrect uploads require full texture row re-striding unless dw == width.
+   * Doing glTexSubImage2D with row-by-row offsets or non-matching stride
+   * causes sheared / flickering tiles on Adreno ES 2.0 without GL_UNPACK_ROW_LENGTH.
+   * If damaged area is not full width, upload the full frame to guarantee coherence. */
   if (stride == (size_t)width * 4 && clamp_damage(surf, width, height, &dx, &dy, &dw, &dh) &&
-      (dw < width || dh < height)) {
+      dw == width && dh < height) {
     if (g_gl.tex_w == width && g_gl.tex_h == height) {
-      /* SHM rows start at the top while GL texture rows start at the
-       * bottom, so cursor damage would land mirrored without this flip. */
-      int dst_y = height - dy - dh;
       glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
-      glTexSubImage2D(GL_TEXTURE_2D, 0, dx, dst_y, dw, dh,
-                      GL_BGRA_EXT, GL_UNSIGNED_BYTE, data + (size_t)dy * stride + (size_t)dx * 4);
+      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, dy, width, dh,
+                      GL_BGRA_EXT, GL_UNSIGNED_BYTE, data + (size_t)dy * stride);
       return;
     }
   }
