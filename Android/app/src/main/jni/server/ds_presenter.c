@@ -350,6 +350,10 @@ static int ensure_context(struct ds_server *server) {
     return -1;
   }
 
+  /* Disable VSYNC throttle so eglSwapBuffers never blocks presentation.
+   * Android SurfaceFlinger handles its own hardware compositor latching. */
+  eglSwapInterval(g_gl.display, 0);
+
   /* Compile presentation quad shader */
   GLuint vs = compile_shader(GL_VERTEX_SHADER, vertex_shader_source);
   GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fragment_shader_source);
@@ -410,6 +414,8 @@ static int ensure_surface(struct ds_server *server) {
     g_gl.surface = EGL_NO_SURFACE;
     return -1;
   }
+
+  eglSwapInterval(g_gl.display, 0);
 
   glViewport(0, 0, server->width, server->height);
   return 0;

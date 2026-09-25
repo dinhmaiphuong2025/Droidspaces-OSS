@@ -352,8 +352,14 @@ fun WaylandDisplayScreen(
                                 }
                                 MotionEvent.ACTION_MOVE -> {
                                     if (event.pointerCount == 1) {
-                                        val dx = (event.x - lastTouchX) * 1.35f
-                                        val dy = (event.y - lastTouchY) * 1.35f
+                                        val rawDx = event.x - lastTouchX
+                                        val rawDy = event.y - lastTouchY
+                                        val dist = hypot(rawDx, rawDy)
+                                        // Dynamic acceleration: smooth precision for small movements,
+                                        // fast travel for rapid swipes across high-res 1440x3200 display.
+                                        val accel = if (dist > 15f) 2.5f else 1.8f
+                                        val dx = rawDx * accel
+                                        val dy = rawDy * accel
                                         if (hypot(event.x - startTouchX, event.y - startTouchY) > touchSlop) {
                                             hasMovedPastSlop = true
                                         }
