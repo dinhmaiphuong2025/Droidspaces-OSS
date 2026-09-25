@@ -160,6 +160,11 @@ struct ds_seat {
   struct ds_surface *pointer_focus;
   struct ds_surface *keyboard_focus;
 
+  uint32_t mods_depressed;
+  uint32_t mods_latched;
+  uint32_t mods_locked;
+  uint32_t mods_group;
+
   float cursor_x;
   float cursor_y;
 };
@@ -248,6 +253,7 @@ void ds_shm_free_buffer(struct ds_buffer *buf);
 void ds_presenter_init(struct ds_server *server);
 void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *surf);
 void ds_presenter_detach(struct ds_server *server);
+void ds_presenter_destroy(struct ds_server *server);
 
 /* Server window lifecycle: the display and its clients survive surface
  * changes, only the native window and EGL surface are swapped. */

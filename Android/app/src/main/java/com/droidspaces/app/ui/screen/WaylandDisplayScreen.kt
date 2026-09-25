@@ -269,6 +269,7 @@ fun WaylandDisplayScreen(
             insetsController?.hide(WindowInsetsCompat.Type.ime())
             surfaceViewRef?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
             activity?.window?.decorView?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+            surfaceViewRef?.clearFocus()
         } else {
             surfaceViewRef?.requestFocus()
             surfaceViewRef?.let { imm?.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT) }

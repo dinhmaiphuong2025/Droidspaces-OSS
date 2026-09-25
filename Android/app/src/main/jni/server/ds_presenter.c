@@ -26,6 +26,9 @@ struct ds_gl_context {
   int tex_w;
   int tex_h;
   int initialized;
+
+  uint8_t *staging_buf;
+  size_t staging_size;
 };
 
 static struct ds_gl_context g_gl;
@@ -63,6 +66,19 @@ static void upload_tight_pixels(int width, int height, const uint8_t *data) {
     g_gl.tex_w = width;
     g_gl.tex_h = height;
   }
+}
+
+/* Ensure reusable staging buffer for padded rows without per-frame allocations */
+static uint8_t *ensure_staging_buf(size_t needed) {
+  if (g_gl.staging_size >= needed && g_gl.staging_buf) {
+    return g_gl.staging_buf;
+  }
+  uint8_t *nb = realloc(g_gl.staging_buf, needed);
+  if (nb) {
+    g_gl.staging_buf = nb;
+    g_gl.staging_size = needed;
+  }
+  return nb;
 }
 
 /* Clamp the commit damage to the buffer. Returns 0 when there is nothing
@@ -121,13 +137,13 @@ static void upload_dmabuf_mmap_fallback(struct ds_surface *surf, struct ds_buffe
     upload_subrect(surf, buf->width, buf->height, data, stride);
   } else {
     size_t row = (size_t)buf->width * 4;
-    uint8_t *tight = malloc(row * (size_t)buf->height);
+    size_t needed = row * (size_t)buf->height;
+    uint8_t *tight = ensure_staging_buf(needed);
     if (tight) {
       for (int y = 0; y < buf->height; y++) {
         memcpy(tight + (size_t)y * row, data + (size_t)y * stride, row);
       }
       upload_tight_pixels(buf->width, buf->height, tight);
-      free(tight);
     }
   }
   munmap(map, need);
@@ -230,15 +246,15 @@ static void upload_shm_buffer(struct ds_surface *surf, struct ds_buffer *buf) {
     if (stride == buf->width * 4) {
       upload_subrect(surf, buf->width, buf->height, data, (size_t)stride);
     } else {
-      /* Padded rows: repack into a tight buffer, ES2 has no row length */
+      /* Padded rows: repack into a tight staging buffer, ES2 has no row length */
       size_t row = (size_t)buf->width * 4;
-      uint8_t *tight = malloc(row * (size_t)buf->height);
+      size_t needed = row * (size_t)buf->height;
+      uint8_t *tight = ensure_staging_buf(needed);
       if (tight) {
         for (int y = 0; y < buf->height; y++) {
           memcpy(tight + (size_t)y * row, data + (size_t)y * stride, row);
         }
         upload_tight_pixels(buf->width, buf->height, tight);
-        free(tight);
       }
     }
     if (!g_first_frame_logged) {
@@ -435,6 +451,16 @@ void ds_presenter_detach(struct ds_server *server) {
   if (g_gl.surface != EGL_NO_SURFACE) {
     eglDestroySurface(g_gl.display, g_gl.surface);
     g_gl.surface = EGL_NO_SURFACE;
+  }
+}
+
+void ds_presenter_destroy(struct ds_server *server) {
+  (void)server;
+  ds_presenter_detach(server);
+  if (g_gl.staging_buf) {
+    free(g_gl.staging_buf);
+    g_gl.staging_buf = NULL;
+    g_gl.staging_size = 0;
   }
 }
 

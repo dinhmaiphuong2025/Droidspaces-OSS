@@ -601,6 +601,27 @@ static void dispatch_pointer_axis(struct ds_server *server, uint32_t axis, float
   }
 }
 
+static uint32_t key_to_modifier_mask(uint32_t key) {
+  switch (key) {
+    case 42: /* KEY_LEFTSHIFT */
+    case 54: /* KEY_RIGHTSHIFT */
+      return (1 << 0); /* Shift */
+    case 58: /* KEY_CAPSLOCK */
+      return (1 << 1); /* Lock */
+    case 29: /* KEY_LEFTCTRL */
+    case 97: /* KEY_RIGHTCTRL */
+      return (1 << 2); /* Control */
+    case 56:  /* KEY_LEFTALT */
+    case 100: /* KEY_RIGHTALT */
+      return (1 << 3); /* Mod1 / Alt */
+    case 125: /* KEY_LEFTMETA */
+    case 126: /* KEY_RIGHTMETA */
+      return (1 << 6); /* Mod4 / Super */
+    default:
+      return 0;
+  }
+}
+
 static void dispatch_key(struct ds_server *server, uint32_t key, uint32_t state) {
   if (!server->seat) return;
   struct ds_surface *surf = get_target_surface(server);
@@ -615,6 +636,28 @@ static void dispatch_key(struct ds_server *server, uint32_t key, uint32_t state)
   wl_resource_for_each(res, &server->seat->keyboard_resources) {
     if (wl_resource_get_client(res) == client) {
       wl_keyboard_send_key(res, serial, time_ms, key, state);
+    }
+  }
+
+  uint32_t mod_bit = key_to_modifier_mask(key);
+  if (mod_bit != 0) {
+    uint32_t old_depressed = server->seat->mods_depressed;
+    if (state) {
+      server->seat->mods_depressed |= mod_bit;
+    } else {
+      server->seat->mods_depressed &= ~mod_bit;
+    }
+    if (server->seat->mods_depressed != old_depressed) {
+      uint32_t mod_serial = wl_display_next_serial(server->display);
+      wl_resource_for_each(res, &server->seat->keyboard_resources) {
+        if (wl_resource_get_client(res) == client) {
+          wl_keyboard_send_modifiers(res, mod_serial,
+                                     server->seat->mods_depressed,
+                                     server->seat->mods_latched,
+                                     server->seat->mods_locked,
+                                     server->seat->mods_group);
+        }
+      }
     }
   }
 }

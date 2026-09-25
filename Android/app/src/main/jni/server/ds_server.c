@@ -242,7 +242,7 @@ void ds_server_destroy(struct ds_server *server) {
   pthread_join(server->loop_thread, NULL);
 
   /* Event thread is gone, safe to drop GL and window without the lock */
-  ds_presenter_detach(server);
+  ds_presenter_destroy(server);
   if (server->window) {
     ANativeWindow_release(server->window);
     server->window = NULL;

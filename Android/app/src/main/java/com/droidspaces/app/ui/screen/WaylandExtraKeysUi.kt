@@ -343,8 +343,8 @@ fun WaylandExtraKeysDialog(
     onSave: (List<List<WaylandExtraKey>>) -> Unit
 ) {
     val rows = remember {
-        mutableStateListOf<MutableList<WaylandExtraKey>>().apply {
-            initial.forEach { add(it.toMutableList()) }
+        mutableStateListOf<List<WaylandExtraKey>>().apply {
+            addAll(initial)
         }
     }
     var pickerTab by remember { mutableIntStateOf(0) }
@@ -358,7 +358,7 @@ fun WaylandExtraKeysDialog(
                 dismissLabel = stringResource(R.string.cancel),
                 confirmLabel = stringResource(R.string.wayland_extra_keys_save),
                 onDismiss = onDismiss,
-                onConfirm = { onSave(rows.map { it.toList() }) }
+                onConfirm = { onSave(rows.toList()) }
             )
         }
     ) {
@@ -416,8 +416,10 @@ fun WaylandExtraKeysDialog(
                             IconButton(
                                 onClick = {
                                     if (keyIndex > 0) {
-                                        val item = rows[rowIndex].removeAt(keyIndex)
-                                        rows[rowIndex].add(keyIndex - 1, item)
+                                        val updated = rows[rowIndex].toMutableList()
+                                        val item = updated.removeAt(keyIndex)
+                                        updated.add(keyIndex - 1, item)
+                                        rows[rowIndex] = updated
                                     }
                                 },
                                 enabled = keyIndex > 0,
@@ -428,8 +430,10 @@ fun WaylandExtraKeysDialog(
                             IconButton(
                                 onClick = {
                                     if (keyIndex < rows[rowIndex].size - 1) {
-                                        val item = rows[rowIndex].removeAt(keyIndex)
-                                        rows[rowIndex].add(keyIndex + 1, item)
+                                        val updated = rows[rowIndex].toMutableList()
+                                        val item = updated.removeAt(keyIndex)
+                                        updated.add(keyIndex + 1, item)
+                                        rows[rowIndex] = updated
                                     }
                                 },
                                 enabled = keyIndex < rows[rowIndex].size - 1,
@@ -438,7 +442,11 @@ fun WaylandExtraKeysDialog(
                                 Icon(Icons.Default.ArrowDownward, null, modifier = Modifier.size(16.dp))
                             }
                             IconButton(
-                                onClick = { rows[rowIndex].removeAt(keyIndex) },
+                                onClick = {
+                                    val updated = rows[rowIndex].toMutableList()
+                                    updated.removeAt(keyIndex)
+                                    rows[rowIndex] = updated
+                                },
                                 modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(Icons.Default.Delete, null,
@@ -467,7 +475,7 @@ fun WaylandExtraKeysDialog(
                 )
             }
             OutlinedButton(onClick = {
-                rows.add(mutableListOf())
+                rows.add(emptyList())
                 targetRow = rows.size - 1
             }) {
                 Text("+Row", fontSize = 11.sp)
@@ -478,7 +486,7 @@ fun WaylandExtraKeysDialog(
             onPick = { preset ->
                 val idx = targetRow.coerceIn(0, (rows.size - 1).coerceAtLeast(0))
                 if (idx < rows.size) {
-                    rows[idx].add(preset)
+                    rows[idx] = rows[idx] + preset
                 }
             },
             currentTab = pickerTab,
@@ -488,7 +496,7 @@ fun WaylandExtraKeysDialog(
         Spacer(Modifier.height(4.dp))
         TextButton(onClick = {
             rows.clear()
-            defaultWaylandExtraKeys().forEach { rows.add(it.toMutableList()) }
+            rows.addAll(defaultWaylandExtraKeys())
             targetRow = 0
         }) {
             Text(stringResource(R.string.wayland_extra_keys_reset))
