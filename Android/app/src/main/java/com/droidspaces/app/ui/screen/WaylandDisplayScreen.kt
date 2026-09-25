@@ -259,12 +259,16 @@ fun WaylandDisplayScreen(
 
     // One keyboard toggle shared by the pill button and the extra keys bar,
     // both directions: shows the IME when hidden, hides it when visible.
+    // The hide path keeps focus and covers both window tokens: clearing
+    // focus first would unbind the input connection and make the async
+    // hide request a no-op, and the SurfaceView lives in its own window
+    // apart from the activity decor view.
     val toggleKeyboard: () -> Unit = {
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         if (isKeyboardVisible) {
             insetsController?.hide(WindowInsetsCompat.Type.ime())
             surfaceViewRef?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
-            surfaceViewRef?.clearFocus()
+            activity?.window?.decorView?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
         } else {
             surfaceViewRef?.requestFocus()
             surfaceViewRef?.let { imm?.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT) }
