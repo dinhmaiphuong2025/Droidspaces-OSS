@@ -7,8 +7,10 @@
 #include "server/ds_server.h"
 #include <jni.h>
 #include <libgen.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define JNI_METHOD(name) Java_com_droidspaces_app_ui_wayland_WaylandNative_##name
 
@@ -60,13 +62,23 @@ JNIEXPORT jboolean JNICALL JNI_METHOD(nativeSetSurface)(
   }
 
   /* Keep the display and its clients across surface changes. A new server
-   * is only needed when there is none, or the socket dir moved. */
+   * is only needed when there is none, the socket dir moved, or the socket
+   * file is gone: it can be deleted externally while the server keeps
+   * listening on an unlinked fd no new client can reach. */
   if (g_server && strcmp(g_server->sock_dir, dir_buf) == 0) {
-    pthread_mutex_lock(&g_server->lock);
-    ds_server_attach_window(g_server, win, width, height);
-    pthread_mutex_unlock(&g_server->lock);
-    pthread_mutex_unlock(&g_server_lock);
-    return JNI_TRUE;
+    char sock_path[512];
+    snprintf(sock_path, sizeof(sock_path), "%s/wayland-0", dir_buf);
+    struct stat st;
+    if (stat(sock_path, &st) == 0 && S_ISSOCK(st.st_mode)) {
+      pthread_mutex_lock(&g_server->lock);
+      ds_server_attach_window(g_server, win, width, height);
+      pthread_mutex_unlock(&g_server->lock);
+      pthread_mutex_unlock(&g_server_lock);
+      return JNI_TRUE;
+    }
+    DS_LOGW("Wayland socket %s missing, rebinding display", sock_path);
+    ds_server_destroy(g_server);
+    g_server = NULL;
   }
 
   if (g_server) {
