@@ -36,7 +36,8 @@ fun defaultWaylandExtraKeys(): List<List<WaylandExtraKey>> = listOf(
         WaylandExtraKey("Home", 102, repeat = true),
         WaylandExtraKey("↑", 103, repeat = true),
         WaylandExtraKey("End", 107, repeat = true),
-        WaylandExtraKey("PgUp", 104, repeat = true)
+        WaylandExtraKey("PgUp", 104, repeat = true),
+        WaylandExtraKey("Del", 111, repeat = true)
     ),
     listOf(
         WaylandExtraKey("Tab", 15),

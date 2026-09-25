@@ -222,14 +222,15 @@ fun WaylandExtraKeysBar(
                             ) {
                                 Text(
                                     text = key.label,
-                                    fontSize = 12.sp,
+                                    fontSize = if (key.label.length > 3) 10.sp else 12.sp,
                                     fontWeight = if (isActive || isLocked) FontWeight.Bold else FontWeight.SemiBold,
                                     color = when {
                                         isLocked -> MaterialTheme.colorScheme.primary
                                         isActive -> MaterialTheme.colorScheme.primary
                                         else -> MaterialTheme.colorScheme.onSurface
                                     },
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }

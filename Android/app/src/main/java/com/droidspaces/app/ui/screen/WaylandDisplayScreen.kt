@@ -23,6 +23,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,7 +57,11 @@ import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -68,6 +74,7 @@ import com.droidspaces.app.util.WaylandExtraKey
 import com.droidspaces.app.util.WaylandKeyMapper
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 enum class InputMode {
     TOUCHPAD,
@@ -142,6 +149,16 @@ fun WaylandDisplayScreen(
     val isKeyboardVisible = WindowInsets.isImeVisible
     var isConnected by remember { mutableStateOf(true) }
     val socketDir = remember(containerName) { ValidationUtils.waylandSocketDir(containerName) }
+
+    // Draggable pill position in px. NaN until the first layout parks it
+    // at the right edge, vertically centered.
+    var pillX by remember { mutableStateOf(Float.NaN) }
+    var pillY by remember { mutableStateOf(0f) }
+    var pillW by remember { mutableStateOf(0) }
+    var pillH by remember { mutableStateOf(0) }
+    var stageW by remember { mutableStateOf(0) }
+    var stageH by remember { mutableStateOf(0) }
+    val pillMargin = with(LocalDensity.current) { 12.dp.toPx() }
 
     // Poll the compositor connection so the waiting card shows while no
     // client is on the display and hides itself once one connects.
@@ -266,6 +283,10 @@ fun WaylandDisplayScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .onGloballyPositioned {
+                stageW = it.size.width
+                stageH = it.size.height
+            }
     ) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -463,12 +484,50 @@ fun WaylandDisplayScreen(
             }
         }
 
-        // Right-edge Control Pill (vertical).
-        // The bottom dock holds extra keys, so the controls move to the side.
+        // Control pill, draggable, snaps to the nearest side edge on release.
+        // Taps still reach the buttons: the drag detector only consumes
+        // gestures past the touch slop.
         Surface(
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 12.dp)
+                .align(Alignment.TopStart)
+                .offset {
+                    IntOffset(
+                        if (pillX.isNaN()) 0 else pillX.roundToInt(),
+                        pillY.roundToInt()
+                    )
+                }
+                .onGloballyPositioned {
+                    pillW = it.size.width
+                    pillH = it.size.height
+                    if (pillX.isNaN() && stageW > 0) {
+                        pillX = stageW - pillW - pillMargin
+                        pillY = ((stageH - pillH) / 2f).coerceAtLeast(0f)
+                    } else if (!pillX.isNaN()) {
+                        // Keep the pill on screen across rotation and resize.
+                        pillX = pillX.coerceIn(0f, (stageW - pillW).coerceAtLeast(0).toFloat())
+                        pillY = pillY.coerceIn(0f, (stageH - pillH).coerceAtLeast(0).toFloat())
+                    }
+                }
+                .pointerInput(stageW, stageH, pillW, pillH) {
+                    detectDragGestures(
+                        onDragEnd = {
+                            val maxX = (stageW - pillW).coerceAtLeast(0).toFloat()
+                            val maxY = (stageH - pillH).coerceAtLeast(0).toFloat()
+                            pillX = if (pillX + pillW / 2f < stageW / 2f) {
+                                pillMargin
+                            } else {
+                                (maxX - pillMargin).coerceAtLeast(0f)
+                            }
+                            pillY = pillY.coerceIn(0f, maxY)
+                        }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        pillX = (pillX + dragAmount.x)
+                            .coerceIn(0f, (stageW - pillW).coerceAtLeast(0).toFloat())
+                        pillY = (pillY + dragAmount.y)
+                            .coerceIn(0f, (stageH - pillH).coerceAtLeast(0).toFloat())
+                    }
+                }
                 .clip(RoundedCornerShape(24.dp))
                 .border(
                     width = 1.dp,
