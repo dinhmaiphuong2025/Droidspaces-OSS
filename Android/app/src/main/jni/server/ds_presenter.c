@@ -150,18 +150,17 @@ static void upload_dmabuf_mmap_fallback(struct ds_surface *surf, struct ds_buffe
 static void upload_dmabuf_buffer(struct ds_surface *surf, struct ds_buffer *buf) {
   if (!buf || buf->dmabuf_num_planes != 1 || buf->dmabuf_fds[0] < 0) return;
   if (buf->width <= 0 || buf->height <= 0) return;
-  if (buf->dmabuf_modifiers[0] != 0) {
-    /* Tiled or compressed buffers cannot be read as linear rows, so the
-     * old frame stays up instead of blocky garbage. */
+  if (buf->dmabuf_num_planes != 1 || buf->dmabuf_modifiers[0] != 0 ||
+      (buf->format != DRM_FORMAT_ARGB8888 && buf->format != DRM_FORMAT_XRGB8888)) {
+    /* Tiled, multi-plane, or unexpected-format buffers cannot be read as
+     * linear rows, so the old frame stays up instead of blocky garbage. */
     static int logged = 0;
     if (!logged) {
       logged = 1;
-      DS_LOGI("skipping non-linear dmabuf (modifier 0x%llx)",
+      DS_LOGI("skipping dmabuf planes=%d format=0x%x modifier=0x%llx",
+              buf->dmabuf_num_planes, buf->format,
               (unsigned long long)buf->dmabuf_modifiers[0]);
     }
-    return;
-  }
-  if (buf->format != DRM_FORMAT_ARGB8888 && buf->format != DRM_FORMAT_XRGB8888) {
     return;
   }
 
@@ -188,7 +187,17 @@ static void upload_dmabuf_buffer(struct ds_surface *surf, struct ds_buffer *buf)
   EGLImageKHR img = g_eglCreateImageKHR(g_gl.display, EGL_NO_CONTEXT,
                                        EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
   if (img == EGL_NO_IMAGE_KHR) {
-    DS_LOGE("eglCreateImage failed: 0x%x", eglGetError());
+    /* Log once with the full attrs: per-frame logcat writes cost FPS too. */
+    static int fail_logged = 0;
+    if (!fail_logged) {
+      fail_logged = 1;
+      EGLint err = eglGetError();
+      DS_LOGI("dmabuf import failed once: err=0x%x %dx%d fourcc=0x%x stride=%u offset=%u",
+              err, buf->width, buf->height, buf->format,
+              buf->dmabuf_strides[0], buf->dmabuf_offsets[0]);
+    } else {
+      (void)eglGetError();
+    }
     upload_dmabuf_mmap_fallback(surf, buf);
     return;
   }
@@ -299,6 +308,12 @@ static int ensure_context(struct ds_server *server) {
     DS_LOGE("eglInitialize failed");
     return -1;
   }
+
+  /* One line so logcat shows whether zero-copy import can work at all. */
+  const char *egl_exts = eglQueryString(g_gl.display, EGL_EXTENSIONS);
+  DS_LOGI("EGL dmabuf import %s", (egl_exts && strstr(egl_exts, "EGL_EXT_image_dma_buf_import"))
+                                      ? "supported"
+                                      : "MISSING");
 
   const EGLint attribs[] = {
       EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
@@ -454,20 +469,10 @@ void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *s
 
   glUseProgram(g_gl.program);
 
-  /* Aspect ratio correction: fit buffer into viewport without stretching */
+  /* One fullscreen surface always owns this output, so stretch to fill.
+   * Letterboxing left a 1-2px bar flickering on transient resizes. */
   float qx = 1.0f;
   float qy = 1.0f;
-  if (surf->width > 0 && surf->height > 0 && server->width > 0 && server->height > 0) {
-    float buf_aspect = (float)surf->width / (float)surf->height;
-    float win_aspect = (float)server->width / (float)server->height;
-    if (buf_aspect > win_aspect * 1.001f) {
-      /* Buffer is wider than window: letterbox top and bottom */
-      qy = win_aspect / buf_aspect;
-    } else if (buf_aspect < win_aspect * 0.999f) {
-      /* Buffer is taller than window: pillarbox left and right */
-      qx = buf_aspect / win_aspect;
-    }
-  }
 
   const GLfloat quad_data[] = {
       -qx, -qy, 0.0f, 1.0f,

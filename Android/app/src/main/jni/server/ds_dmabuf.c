@@ -219,12 +219,11 @@ static void dmabuf_bind(struct wl_client *client, void *data, uint32_t version, 
   }
   wl_resource_set_implementation(resource, &ds_dmabuf_impl, data, NULL);
 
-  /* Advertise supported DRM formats */
+  /* Only formats the presenter can upload. Clients fall back to
+   * these instead of stalling on buffers that would be skipped. */
   uint32_t formats[] = {
       DRM_FORMAT_ARGB8888,
       DRM_FORMAT_XRGB8888,
-      DRM_FORMAT_ABGR8888,
-      DRM_FORMAT_XBGR8888,
   };
   size_t count = sizeof(formats) / sizeof(formats[0]);
 
