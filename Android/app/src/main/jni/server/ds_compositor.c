@@ -125,6 +125,17 @@ static void surface_set_input_region(struct wl_client *client, struct wl_resourc
 static void surface_send_frames(struct ds_server *server, struct ds_surface *surf,
                                 uint32_t msec);
 
+static void flush_frame_callbacks(struct ds_surface *surf, uint32_t msec) {
+  struct ds_frame_callback *cb, *tmp;
+  wl_list_for_each_safe(cb, tmp, &surf->frame_callback_list, link) {
+    wl_callback_send_done(cb->resource, msec);
+    wl_resource_destroy(cb->resource);
+    wl_list_remove(&cb->link);
+    free(cb);
+  }
+  surf->last_frame_ms = msec;
+}
+
 static void surface_commit(struct wl_client *client, struct wl_resource *resource) {
   (void)client;
   struct ds_surface *surf = wl_resource_get_user_data(resource);
@@ -195,17 +206,6 @@ static uint32_t frame_interval_ms(struct ds_server *server) {
     if (hz > 0) return 1000 / hz;
   }
   return 16;
-}
-
-static void flush_frame_callbacks(struct ds_surface *surf, uint32_t msec) {
-  struct ds_frame_callback *cb, *tmp;
-  wl_list_for_each_safe(cb, tmp, &surf->frame_callback_list, link) {
-    wl_callback_send_done(cb->resource, msec);
-    wl_resource_destroy(cb->resource);
-    wl_list_remove(&cb->link);
-    free(cb);
-  }
-  surf->last_frame_ms = msec;
 }
 
 static void surface_send_frames(struct ds_server *server, struct ds_surface *surf,
