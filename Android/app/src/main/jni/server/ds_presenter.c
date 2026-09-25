@@ -90,8 +90,11 @@ static void upload_subrect(struct ds_surface *surf, int width, int height,
   if (stride == (size_t)width * 4 && clamp_damage(surf, width, height, &dx, &dy, &dw, &dh) &&
       (dw < width || dh < height)) {
     if (g_gl.tex_w == width && g_gl.tex_h == height) {
+      /* SHM rows start at the top while GL texture rows start at the
+       * bottom, so cursor damage would land mirrored without this flip. */
+      int dst_y = height - dy - dh;
       glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
-      glTexSubImage2D(GL_TEXTURE_2D, 0, dx, dy, dw, dh,
+      glTexSubImage2D(GL_TEXTURE_2D, 0, dx, dst_y, dw, dh,
                       GL_BGRA_EXT, GL_UNSIGNED_BYTE, data + (size_t)dy * stride + (size_t)dx * 4);
       return;
     }
@@ -147,7 +150,17 @@ static void upload_dmabuf_mmap_fallback(struct ds_surface *surf, struct ds_buffe
 static void upload_dmabuf_buffer(struct ds_surface *surf, struct ds_buffer *buf) {
   if (!buf || buf->dmabuf_num_planes != 1 || buf->dmabuf_fds[0] < 0) return;
   if (buf->width <= 0 || buf->height <= 0) return;
-  if (buf->dmabuf_modifiers[0] != 0) return;
+  if (buf->dmabuf_modifiers[0] != 0) {
+    /* Tiled or compressed buffers cannot be read as linear rows, so the
+     * old frame stays up instead of blocky garbage. */
+    static int logged = 0;
+    if (!logged) {
+      logged = 1;
+      DS_LOGI("skipping non-linear dmabuf (modifier 0x%llx)",
+              (unsigned long long)buf->dmabuf_modifiers[0]);
+    }
+    return;
+  }
   if (buf->format != DRM_FORMAT_ARGB8888 && buf->format != DRM_FORMAT_XRGB8888) {
     return;
   }
