@@ -419,6 +419,9 @@ void ds_seat_surface_destroyed(struct ds_server *server, struct ds_surface *surf
       }
     }
     seat->pointer_focus = NULL;
+    /* Immediately restore pointer focus to the root/active surface so
+     * events are not dropped into the void. */
+    ensure_pointer_focus(server);
   }
 
   if (seat->keyboard_focus == surf) {
@@ -433,6 +436,9 @@ void ds_seat_surface_destroyed(struct ds_server *server, struct ds_surface *surf
       }
     }
     seat->keyboard_focus = NULL;
+    /* Immediately restore keyboard focus to the remaining active surface
+     * so shortcuts like Alt+T can open windows again. */
+    ensure_keyboard_focus(server);
   }
 }
 

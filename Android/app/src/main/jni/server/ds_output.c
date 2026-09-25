@@ -46,6 +46,7 @@ static void output_bind(struct wl_client *client, void *data, uint32_t version, 
   wl_output_send_mode(resource, flags, output->width, output->height,
                       output->refresh_mhz > 0 ? output->refresh_mhz : 60000);
 
+  /* Send name and description for all versions >= 4 to satisfy modern compositors (Smithay/SCTK) */
   if (version >= 4) {
     wl_output_send_name(resource, "WL-1");
     wl_output_send_description(resource, "Droidspaces Display");

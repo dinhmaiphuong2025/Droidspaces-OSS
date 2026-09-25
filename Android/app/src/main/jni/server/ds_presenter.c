@@ -457,8 +457,8 @@ void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *s
   eglMakeCurrent(g_gl.display, g_gl.surface, g_gl.surface, g_gl.context);
 
   glViewport(0, 0, server->width, server->height);
-  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT);
+  /* Do not glClear: fullscreen quad covers the entire viewport. Clearing
+   * black beforehand causes flickering when rendering partial damage. */
 
   /* Upload client pixels. Without this the quad stays black. */
   if (surf->current_buffer->is_shm && surf->current_buffer->shm) {

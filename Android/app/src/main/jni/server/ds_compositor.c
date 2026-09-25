@@ -160,7 +160,11 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
       surf->dmg_valid = 0;
     }
 
-    if (surf->xdg_surf && surf->role != DS_SURFACE_ROLE_CURSOR) {
+    /* Only fullscreen toplevel surfaces are allowed to present. Cursor
+     * surfaces, subsurface overlays, and small popups must never present
+     * to the main window or overwrite server->active_surface. */
+    if (surf->xdg_surf && surf->role != DS_SURFACE_ROLE_CURSOR &&
+        surf->width >= 200 && surf->height >= 200) {
       surf->server->active_surface = surf;
 
       /* Present directly via ASurfaceControl zero-flicker presenter */
