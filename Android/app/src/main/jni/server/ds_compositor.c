@@ -182,8 +182,8 @@ static void surface_commit(struct wl_client *client, struct wl_resource *resourc
       ds_presenter_present_surface(surf->server, surf);
     }
 
-    /* Release the buffer so double-buffered clients keep submitting frames.
-     * Only send release if the buffer was not already re-attached. */
+    /* Release buffer AFTER presentation is done so client does not overwrite
+     * buffer while GPU/CPU is reading it. */
     if (surf->current_buffer && surf->current_buffer->resource) {
       wl_buffer_send_release(surf->current_buffer->resource);
     }

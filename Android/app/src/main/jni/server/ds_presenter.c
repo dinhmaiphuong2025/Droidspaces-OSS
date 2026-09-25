@@ -86,20 +86,11 @@ static int clamp_damage(struct ds_surface *surf, int width, int height,
  * frame, resizes, and clients that never send damage. */
 static void upload_subrect(struct ds_surface *surf, int width, int height,
                            const uint8_t *data, size_t stride) {
-  int dx, dy, dw, dh;
-  /* Subrect uploads require full texture row re-striding unless dw == width.
-   * Doing glTexSubImage2D with row-by-row offsets or non-matching stride
-   * causes sheared / flickering tiles on Adreno ES 2.0 without GL_UNPACK_ROW_LENGTH.
-   * If damaged area is not full width, upload the full frame to guarantee coherence. */
-  if (stride == (size_t)width * 4 && clamp_damage(surf, width, height, &dx, &dy, &dw, &dh) &&
-      dw == width && dh < height) {
-    if (g_gl.tex_w == width && g_gl.tex_h == height) {
-      glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
-      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, dy, width, dh,
-                      GL_BGRA_EXT, GL_UNSIGNED_BYTE, data + (size_t)dy * stride);
-      return;
-    }
-  }
+  (void)surf;
+  (void)stride;
+  /* Always upload full frame to keep coherent texture state across double-buffered
+   * compositor commits. Partial glTexSubImage2D with single texture causes tearing
+   * and mouse flicker under nested Wayland compositors. */
   upload_tight_pixels(width, height, data);
 }
 
@@ -376,8 +367,8 @@ static int ensure_context(struct ds_server *server) {
 
   glGenTextures(1, &g_gl.texture_id);
   glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 

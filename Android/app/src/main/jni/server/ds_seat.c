@@ -319,6 +319,12 @@ static struct ds_surface *get_target_surface(struct ds_server *server) {
       return surf;
     }
   }
+  /* Fallback: any surface with an xdg_surf or resource that isn't a cursor */
+  wl_list_for_each(surf, &server->surfaces, link) {
+    if (surf->role != DS_SURFACE_ROLE_CURSOR && surf->resource) {
+      return surf;
+    }
+  }
   return NULL;
 }
 
