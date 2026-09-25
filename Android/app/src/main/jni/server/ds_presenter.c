@@ -158,6 +158,10 @@ static void upload_dmabuf_buffer(struct ds_surface *surf, struct ds_buffer *buf)
     return;
   }
 
+  /* MODIFIER_LO/HI are only valid with
+   * EGL_EXT_image_dma_buf_import_modifiers. Drivers without it fail the
+   * whole import with EGL_BAD_ACCESS when they appear, so for linear
+   * buffers (the only ones accepted above) they stay out. */
   EGLint attrs[] = {
       EGL_WIDTH, buf->width,
       EGL_HEIGHT, buf->height,
@@ -165,8 +169,6 @@ static void upload_dmabuf_buffer(struct ds_surface *surf, struct ds_buffer *buf)
       EGL_DMA_BUF_PLANE0_FD_EXT, buf->dmabuf_fds[0],
       EGL_DMA_BUF_PLANE0_OFFSET_EXT, (EGLint)buf->dmabuf_offsets[0],
       EGL_DMA_BUF_PLANE0_PITCH_EXT, (EGLint)buf->dmabuf_strides[0],
-      EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT, (EGLint)(buf->dmabuf_modifiers[0] & 0xffffffffu),
-      EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT, (EGLint)(buf->dmabuf_modifiers[0] >> 32),
       EGL_NONE,
   };
 
