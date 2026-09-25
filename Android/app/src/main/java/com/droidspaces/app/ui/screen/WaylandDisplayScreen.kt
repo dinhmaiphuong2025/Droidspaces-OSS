@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.ViewConfiguration
@@ -91,6 +92,22 @@ private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
     init {
         isFocusable = true
         isFocusableInTouchMode = true
+    }
+
+    // SurfaceFlinger parks every window at 60Hz unless the surface votes
+    // otherwise, so a 120Hz panel showed 120Hz output and still scrolled
+    // at 60. Vote the highest supported mode on both the surface and the
+    // window. Below API 30 there is no frame rate API, leave the default.
+    fun voteHighestRefresh() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val mode = context.display?.supportedModes?.maxByOrNull { it.refreshRate } ?: return
+        holder.surface?.setFrameRate(mode.refreshRate, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+        val activity = context as? Activity ?: return
+        val lp = activity.window.attributes
+        if (lp.preferredDisplayModeId != mode.modeId) {
+            lp.preferredDisplayModeId = mode.modeId
+            activity.window.attributes = lp
+        }
     }
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
@@ -309,12 +326,19 @@ fun WaylandDisplayScreen(
                                 screenW = w.toFloat()
                                 screenH = h.toFloat()
 
-                                val windowManager = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                                this@apply.voteHighestRefresh()
+
+                                // The display's current rate reads 60 until a vote
+                                // lands, so advertise the highest mode the panel
+                                // supports; wl_output mode and frame callbacks pace
+                                // niri from this number.
                                 val refreshRate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                    ctx.display?.refreshRate ?: 60f
+                                    ctx.display?.supportedModes?.maxOfOrNull { it.refreshRate }
+                                        ?: ctx.display?.refreshRate ?: 60f
                                 } else {
                                     @Suppress("DEPRECATION")
-                                    windowManager.defaultDisplay.refreshRate
+                                    (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+                                        .defaultDisplay.refreshRate
                                 }
                                 val refreshMhz = (refreshRate * 1000).toInt()
 

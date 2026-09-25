@@ -85,10 +85,10 @@ static void *server_event_thread(void *arg) {
 
 struct ds_server *ds_server_create(const char *socket_dir, int width, int height,
                                   int refresh_mhz, ANativeWindow *window) {
-  /* SHM full-frame uploads cannot sustain 120Hz phone panels, and the nested
-   * compositor has no use for frames that fast either. Advertise 60Hz so
-   * clients target a frame rate the present path can actually hold. */
-  if (refresh_mhz <= 0 || refresh_mhz > 60000) refresh_mhz = 60000;
+  /* Advertise what the panel actually runs at: the frame callbacks and the
+   * wl_output mode pace every client, so capping this at 60 kept niri at
+   * 60 even on a 120Hz screen. The clamped range only guards garbage. */
+  if (refresh_mhz <= 0 || refresh_mhz > 240000) refresh_mhz = 60000;
 
   struct ds_server *server = calloc(1, sizeof(*server));
   if (!server) return NULL;
