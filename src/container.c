@@ -512,14 +512,11 @@ int start_rootfs(struct ds_config *cfg) {
   }
 
   if (is_android() && cfg->wayland) {
-    if (ds_wayland_daemon_start(cfg) == 0) {
-      /* The display server lives in the app process and only binds this
-       * container's isolated socket once its screen opens, so a timeout
-       * here is routine, not fatal. */
-      char sock_path[512];
-      ds_wayland_socket_path(cfg->container_name, sock_path, sizeof(sock_path));
-      wait_for_socket_or_death(cfg->wayland_pid, sock_path, 3000, 30000);
-    }
+    /* No socket wait: the display server lives in the app process and only
+     * binds this container's isolated socket once its screen opens, which
+     * is always after boot. The container-side compositor units wait on
+     * their own socket with their own retry loops. */
+    ds_wayland_daemon_start(cfg);
   }
 
   if (is_android() && cfg->virgl) {

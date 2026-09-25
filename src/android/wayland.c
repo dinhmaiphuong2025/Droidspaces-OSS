@@ -60,13 +60,6 @@ static void ds_wayland_socket_dir(const char *name, char *out, size_t size) {
   out[j] = '\0';
 }
 
-void ds_wayland_socket_path(const char *container_name, char *out, size_t size) {
-  char dir[128];
-  ds_wayland_socket_dir(container_name, dir, sizeof(dir));
-  snprintf(out, size, "%s/%s/%s", DS_WAYLAND_SOCK_DIR, dir,
-           DS_WAYLAND_DISPLAY_SOCK);
-}
-
 int ds_setup_wayland_socket(struct ds_config *cfg) {
   if (!cfg || !cfg->wayland || !is_android())
     return 0;

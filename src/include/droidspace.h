@@ -688,10 +688,6 @@ int ds_setup_x11_socket(struct ds_config *cfg);
 int ds_wayland_daemon_start(struct ds_config *cfg);
 void ds_wayland_daemon_stop(struct ds_config *cfg);
 int ds_setup_wayland_socket(struct ds_config *cfg);
-/* Host path of a container's isolated display socket:
- * DS_WAYLAND_SOCK_DIR/<dir>/wayland-0. Mirrors
- * ValidationUtils.waylandSocketDir() in the Android app. */
-void ds_wayland_socket_path(const char *container_name, char *out, size_t size);
 
 /* virgl-android.c */
 

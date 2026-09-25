@@ -711,11 +711,9 @@ reboot_loop:;
     }
 
     if (is_android() && cfg->wayland) {
-      if (ds_wayland_daemon_start(cfg) == 0) {
-        char sock_path[512];
-        ds_wayland_socket_path(cfg->container_name, sock_path, sizeof(sock_path));
-        wait_for_socket_or_death(cfg->wayland_pid, sock_path, 3000, 30000);
-      }
+      /* Same as boot: no socket wait, the display server binds on demand
+       * and the compositor units retry on their own. */
+      ds_wayland_daemon_start(cfg);
     }
 
     /* Refresh ns_inode: new container has a new PID namespace inode.
