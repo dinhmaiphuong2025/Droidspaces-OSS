@@ -24,22 +24,29 @@ data class WaylandExtraKey(
     }
 }
 
+// Default rows mirror the terminal extra keys bar (VIRTUAL_KEYS_LAYOUT in
+// ContainerTerminalScreen): same keys, same order, evdev codes in place of
+// termux key names. The keyboard toggle is appended so the bar can both
+// open and dismiss the IME without leaving the dock.
 fun defaultWaylandExtraKeys(): List<List<WaylandExtraKey>> = listOf(
     listOf(
         WaylandExtraKey("Esc", 1),
+        WaylandExtraKey("/", type = WaylandExtraKey.TYPE_TEXT, text = "/"),
+        WaylandExtraKey("-", type = WaylandExtraKey.TYPE_TEXT, text = "-"),
+        WaylandExtraKey("Home", 102, repeat = true),
+        WaylandExtraKey("↑", 103, repeat = true),
+        WaylandExtraKey("End", 107, repeat = true),
+        WaylandExtraKey("PgUp", 104, repeat = true)
+    ),
+    listOf(
         WaylandExtraKey("Tab", 15),
         WaylandExtraKey("Ctrl", 29, type = WaylandExtraKey.TYPE_MODIFIER),
         WaylandExtraKey("Alt", 56, type = WaylandExtraKey.TYPE_MODIFIER),
-        WaylandExtraKey("Super", 125, type = WaylandExtraKey.TYPE_MODIFIER),
-        WaylandExtraKey("⌨", type = WaylandExtraKey.TYPE_SYSTEM, systemCommand = "toggle_ime")
-    ),
-    listOf(
         WaylandExtraKey("←", 105, repeat = true),
-        WaylandExtraKey("↑", 103, repeat = true),
         WaylandExtraKey("↓", 108, repeat = true),
         WaylandExtraKey("→", 106, repeat = true),
-        WaylandExtraKey("Enter", 28),
-        WaylandExtraKey("Bksp", 14, repeat = true)
+        WaylandExtraKey("PgDn", 109, repeat = true),
+        WaylandExtraKey("⌨", type = WaylandExtraKey.TYPE_SYSTEM, systemCommand = "toggle_ime")
     )
 )
 

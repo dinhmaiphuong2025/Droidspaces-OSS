@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,16 +34,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mouse
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.TouchApp
-import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -61,13 +56,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.droidspaces.app.ui.theme.JetBrainsMono
 import com.droidspaces.app.ui.wayland.WaylandNative
 import com.droidspaces.app.util.ValidationUtils
 import com.droidspaces.app.util.WaylandExtraKey
@@ -141,35 +135,24 @@ private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
 @Composable
 fun WaylandDisplayScreen(
     containerName: String,
-    onNavigateBack: () -> Unit,
-    onNavigateToTerminal: (String) -> Unit
+    onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
-    var showControls by remember { mutableStateOf(false) }
-    var controlsAutoShown by remember { mutableStateOf(false) }
     var inputMode by remember { mutableStateOf(InputMode.TOUCHPAD) }
     val isKeyboardVisible = WindowInsets.isImeVisible
+    var isConnected by remember { mutableStateOf(true) }
+    val socketDir = remember(containerName) { ValidationUtils.waylandSocketDir(containerName) }
 
-    // Watch the compositor connection. With no client on the display there
-    // is nothing to show, so surface the header (with its back button)
-    // instead of leaving the user trapped on a black immersive screen.
+    // Poll the compositor connection so the waiting card shows while no
+    // client is on the display and hides itself once one connects.
     LaunchedEffect(Unit) {
-        var wasConnected = true
         while (true) {
             delay(2000)
-            val connected = try {
+            isConnected = try {
                 WaylandNative.nativeGetClientCount() > 0
             } catch (_: Throwable) {
                 false
             }
-            if (!connected && wasConnected) {
-                showControls = true
-                controlsAutoShown = true
-            } else if (connected && controlsAutoShown) {
-                showControls = false
-                controlsAutoShown = false
-            }
-            wasConnected = connected
         }
     }
 
@@ -239,13 +222,8 @@ fun WaylandDisplayScreen(
     }
 
     BackHandler {
-        if (showControls) {
-            showControls = false
-            controlsAutoShown = false
-        } else {
-            modifiers = releaseAllModifiers(modifiers)
-            onNavigateBack()
-        }
+        modifiers = releaseAllModifiers(modifiers)
+        onNavigateBack()
     }
 
     val touchSlop = remember { ViewConfiguration.get(context).scaledTouchSlop.toFloat() }
@@ -262,28 +240,25 @@ fun WaylandDisplayScreen(
     var twoFingerStartY by remember { mutableStateOf(0f) }
     var isLeftButtonHeld by remember { mutableStateOf(false) }
 
+    // One keyboard toggle shared by the pill button and the extra keys bar,
+    // both directions: shows the IME when hidden, hides it when visible.
+    val toggleKeyboard: () -> Unit = {
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        if (isKeyboardVisible) {
+            insetsController?.hide(WindowInsetsCompat.Type.ime())
+            surfaceViewRef?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
+            surfaceViewRef?.clearFocus()
+        } else {
+            surfaceViewRef?.requestFocus()
+            surfaceViewRef?.let { imm?.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT) }
+            insetsController?.show(WindowInsetsCompat.Type.ime())
+        }
+    }
+
     // System command handler for extra keys
     val handleSystemCommand: (String) -> Unit = { cmd ->
         when (cmd) {
-            "toggle_ime" -> {
-                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                if (isKeyboardVisible) {
-                    insetsController?.hide(WindowInsetsCompat.Type.ime())
-                    surfaceViewRef?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
-                } else {
-                    surfaceViewRef?.requestFocus()
-                    surfaceViewRef?.let { imm?.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT) }
-                    insetsController?.show(WindowInsetsCompat.Type.ime())
-                }
-            }
-            "mouse_left" -> {
-                WaylandNative.nativeSendPointerButton(0x110, 1)
-                WaylandNative.nativeSendPointerButton(0x110, 0)
-            }
-            "mouse_right" -> {
-                WaylandNative.nativeSendPointerButton(0x111, 1)
-                WaylandNative.nativeSendPointerButton(0x111, 0)
-            }
+            "toggle_ime" -> toggleKeyboard()
         }
     }
 
@@ -317,8 +292,7 @@ fun WaylandDisplayScreen(
                                 }
                                 val refreshMhz = (refreshRate * 1000).toInt()
 
-                                val socketPath = "/data/local/tmp/ds-wayland/" +
-                                    "${ValidationUtils.waylandSocketDir(containerName)}/wayland-0"
+                                val socketPath = "/data/local/tmp/ds-wayland/$socketDir/wayland-0"
                                 WaylandNative.nativeSetSurface(
                                     surface = holder.surface,
                                     width = w,
@@ -335,11 +309,6 @@ fun WaylandDisplayScreen(
 
                         setOnTouchListener { view, event ->
                             view.requestFocus()
-                            if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount >= 3) {
-                                showControls = !showControls
-                                controlsAutoShown = false
-                                return@setOnTouchListener true
-                            }
 
                         if (inputMode == InputMode.TOUCHPAD) {
                             when (event.actionMasked) {
@@ -362,6 +331,14 @@ fun WaylandDisplayScreen(
                                         val dy = (event.y - lastTouchY) * 1.35f
                                         if (hypot(event.x - startTouchX, event.y - startTouchY) > touchSlop) {
                                             hasMovedPastSlop = true
+                                        }
+                                        // Press and hold without moving grabs for drag,
+                                        // the laptop tap-and-a-half gesture.
+                                        if (!hasMovedPastSlop && !isLeftButtonHeld &&
+                                            SystemClock.uptimeMillis() - touchDownTime > 450) {
+                                            isLeftButtonHeld = true
+                                            hasMovedPastSlop = true
+                                            WaylandNative.nativeSendPointerButton(0x110, 1)
                                         }
                                         cursorX = (cursorX + dx).coerceIn(0f, screenW)
                                         cursorY = (cursorY + dy).coerceIn(0f, screenH)
@@ -434,82 +411,54 @@ fun WaylandDisplayScreen(
             }
         )
 
-        // Top Header Controls
-        androidx.compose.animation.AnimatedVisibility(
-            visible = showControls,
+        // Waiting card while no compositor is on the display. Shows the
+        // socket paths so a missing connection is diagnosable on the spot,
+        // and hides itself once a client connects.
+        AnimatedVisibility(
+            visible = !isConnected,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 16.dp)
+            modifier = Modifier.align(Alignment.Center)
         ) {
             Surface(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(24.dp))
+                    .padding(horizontal = 24.dp)
+                    .clip(RoundedCornerShape(20.dp))
                     .border(
                         width = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        shape = RoundedCornerShape(24.dp)
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                        shape = RoundedCornerShape(20.dp)
                     ),
-                color = MaterialTheme.colorScheme.surfaceContainer,
+                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
                 tonalElevation = 0.dp
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.Start
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .clickable { onNavigateBack() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
                     Text(
-                        text = containerName,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface
+                        text = "Waiting for compositor",
+                        style = MaterialTheme.typography.titleMedium
                     )
-
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .clickable { onNavigateToTerminal(containerName) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Terminal,
-                            contentDescription = "Terminal",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .clickable {
-                                showControls = false
-                                controlsAutoShown = false
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close overlay",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        text = "No compositor is connected to this display yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        text = "Host: /data/local/tmp/ds-wayland/$socketDir/wayland-0",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono)
+                    )
+                    Text(
+                        text = "Container: /run/ds-wayland/$socketDir/wayland-0",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono)
+                    )
+                    Text(
+                        text = "Check: systemctl status niri",
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
                 }
             }
         }
@@ -576,58 +525,6 @@ fun WaylandDisplayScreen(
                     )
                 }
 
-                // Left Mouse Button
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(19.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .clickable {
-                            WaylandNative.nativeSendPointerButton(0x110, 1)
-                            WaylandNative.nativeSendPointerButton(0x110, 0)
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("L", fontWeight = FontWeight.Bold, fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface)
-                }
-
-                // Right Mouse Button
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(19.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .clickable {
-                            WaylandNative.nativeSendPointerButton(0x111, 1)
-                            WaylandNative.nativeSendPointerButton(0x111, 0)
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("R", fontWeight = FontWeight.Bold, fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface)
-                }
-
-                // Super key
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(RoundedCornerShape(19.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .clickable {
-                            WaylandNative.nativeSendKey(125, 1)
-                            WaylandNative.nativeSendKey(125, 0)
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Widgets,
-                        contentDescription = "Overview",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
                 // Keyboard Toggle
                 Box(
                     modifier = Modifier
@@ -637,17 +534,7 @@ fun WaylandDisplayScreen(
                             if (isKeyboardVisible) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
                             else MaterialTheme.colorScheme.surfaceContainerHigh
                         )
-                        .clickable {
-                            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                            if (isKeyboardVisible) {
-                                insetsController?.hide(WindowInsetsCompat.Type.ime())
-                                surfaceViewRef?.let { imm?.hideSoftInputFromWindow(it.windowToken, 0) }
-                            } else {
-                                surfaceViewRef?.requestFocus()
-                                surfaceViewRef?.let { imm?.showSoftInput(it, InputMethodManager.SHOW_IMPLICIT) }
-                                insetsController?.show(WindowInsetsCompat.Type.ime())
-                            }
-                        },
+                        .clickable { toggleKeyboard() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(

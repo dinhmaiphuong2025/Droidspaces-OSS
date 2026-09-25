@@ -783,10 +783,7 @@ fun DroidspacesNavigation(
             val containerName = backStackEntry.arguments?.getString("containerName") ?: ""
             com.droidspaces.app.ui.screen.WaylandDisplayScreen(
                 containerName = containerName,
-                onNavigateBack = { navController.popBackStack() },
-                onNavigateToTerminal = { name ->
-                    navController.navigate(Screen.Terminal.createRoute(name))
-                }
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }
