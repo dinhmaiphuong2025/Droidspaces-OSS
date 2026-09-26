@@ -20,7 +20,8 @@ struct ds_dmabuf_params {
   int plane_count;
 };
 
-static void buffer_destroy(struct wl_client *client, struct wl_resource *resource) {
+static void buffer_destroy(struct wl_client *client,
+                           struct wl_resource *resource) {
   (void)client;
   wl_resource_destroy(resource);
 }
@@ -31,7 +32,13 @@ static const struct wl_buffer_interface ds_buffer_impl = {
 
 static void buffer_resource_destroy(struct wl_resource *resource) {
   struct ds_buffer *buf = wl_resource_get_user_data(resource);
-  if (!buf) return;
+  if (!buf)
+    return;
+  if (buf->mmap_data && buf->mmap_data != MAP_FAILED) {
+    munmap(buf->mmap_data, buf->mmap_size);
+    buf->mmap_data = NULL;
+    buf->mmap_size = 0;
+  }
   if (buf->ahwb) {
     AHardwareBuffer_release(buf->ahwb);
     buf->ahwb = NULL;
@@ -45,14 +52,16 @@ static void buffer_resource_destroy(struct wl_resource *resource) {
   free(buf);
 }
 
-static void params_destroy(struct wl_client *client, struct wl_resource *resource) {
+static void params_destroy(struct wl_client *client,
+                           struct wl_resource *resource) {
   (void)client;
   wl_resource_destroy(resource);
 }
 
 static void params_add(struct wl_client *client, struct wl_resource *resource,
                        int32_t fd, uint32_t plane_idx, uint32_t offset,
-                       uint32_t stride, uint32_t modifier_hi, uint32_t modifier_lo) {
+                       uint32_t stride, uint32_t modifier_hi,
+                       uint32_t modifier_lo) {
   (void)client;
   struct ds_dmabuf_params *params = wl_resource_get_user_data(resource);
   if (!params) {
@@ -75,9 +84,11 @@ static void params_add(struct wl_client *client, struct wl_resource *resource,
   }
 }
 
-static void create_buffer_from_params(struct wl_client *client, struct wl_resource *params_resource,
-                                      uint32_t buffer_id, int32_t width, int32_t height,
-                                      uint32_t format, int is_immed) {
+static void create_buffer_from_params(struct wl_client *client,
+                                      struct wl_resource *params_resource,
+                                      uint32_t buffer_id, int32_t width,
+                                      int32_t height, uint32_t format,
+                                      int is_immed) {
   struct ds_dmabuf_params *params = wl_resource_get_user_data(params_resource);
   if (!params || params->plane_count < 1) {
     if (!is_immed) {
@@ -100,7 +111,8 @@ static void create_buffer_from_params(struct wl_client *client, struct wl_resour
   wl_list_init(&buf->destroy_listener.link);
 
   /* Take over the plane fds so they survive the params object */
-  buf->dmabuf_num_planes = params->plane_count > MAX_PLANES ? MAX_PLANES : params->plane_count;
+  buf->dmabuf_num_planes =
+      params->plane_count > MAX_PLANES ? MAX_PLANES : params->plane_count;
   for (int i = 0; i < MAX_PLANES; i++) {
     buf->dmabuf_fds[i] = -1;
   }
@@ -113,35 +125,43 @@ static void create_buffer_from_params(struct wl_client *client, struct wl_resour
   }
 
   /* Create wl_buffer resource */
-  buf->resource = wl_resource_create(client, &wl_buffer_interface, 1, buffer_id);
+  buf->resource =
+      wl_resource_create(client, &wl_buffer_interface, 1, buffer_id);
   if (!buf->resource) {
     free(buf);
     wl_client_post_no_memory(client);
     return;
   }
 
-  wl_resource_set_implementation(buf->resource, &ds_buffer_impl, buf, buffer_resource_destroy);
+  wl_resource_set_implementation(buf->resource, &ds_buffer_impl, buf,
+                                 buffer_resource_destroy);
 
   /* Wayland spec: create_immed must NOT send created/failed event.
-   * Only the async create request expects zwp_linux_buffer_params_v1.created. */
+   * Only the async create request expects zwp_linux_buffer_params_v1.created.
+   */
   if (!is_immed) {
     zwp_linux_buffer_params_v1_send_created(params_resource, buf->resource);
   }
 }
 
-static void params_create(struct wl_client *client, struct wl_resource *resource,
-                          int32_t width, int32_t height, uint32_t format, uint32_t flags) {
+static void params_create(struct wl_client *client,
+                          struct wl_resource *resource, int32_t width,
+                          int32_t height, uint32_t format, uint32_t flags) {
   (void)flags;
   /* Not immed: create buffer and send created event */
   uint32_t buffer_id = 0;
-  create_buffer_from_params(client, resource, buffer_id, width, height, format, 0);
+  create_buffer_from_params(client, resource, buffer_id, width, height, format,
+                            0);
 }
 
-static void params_create_immed(struct wl_client *client, struct wl_resource *resource,
-                                uint32_t buffer_id, int32_t width, int32_t height,
-                                uint32_t format, uint32_t flags) {
+static void params_create_immed(struct wl_client *client,
+                                struct wl_resource *resource,
+                                uint32_t buffer_id, int32_t width,
+                                int32_t height, uint32_t format,
+                                uint32_t flags) {
   (void)flags;
-  create_buffer_from_params(client, resource, buffer_id, width, height, format, 1);
+  create_buffer_from_params(client, resource, buffer_id, width, height, format,
+                            1);
 }
 
 static const struct zwp_linux_buffer_params_v1_interface ds_params_impl = {
@@ -153,7 +173,8 @@ static const struct zwp_linux_buffer_params_v1_interface ds_params_impl = {
 
 static void params_resource_destroy(struct wl_resource *resource) {
   struct ds_dmabuf_params *params = wl_resource_get_user_data(resource);
-  if (!params) return;
+  if (!params)
+    return;
   for (int i = 0; i < params->plane_count; i++) {
     if (params->fds[i] >= 0) {
       close(params->fds[i]);
@@ -163,12 +184,14 @@ static void params_resource_destroy(struct wl_resource *resource) {
   free(params);
 }
 
-static void dmabuf_destroy(struct wl_client *client, struct wl_resource *resource) {
+static void dmabuf_destroy(struct wl_client *client,
+                           struct wl_resource *resource) {
   (void)client;
   wl_resource_destroy(resource);
 }
 
-static void dmabuf_create_params(struct wl_client *client, struct wl_resource *resource,
+static void dmabuf_create_params(struct wl_client *client,
+                                 struct wl_resource *resource,
                                  uint32_t params_id) {
   struct ds_server *server = wl_resource_get_user_data(resource);
   struct ds_dmabuf_params *params = calloc(1, sizeof(*params));
@@ -182,25 +205,35 @@ static void dmabuf_create_params(struct wl_client *client, struct wl_resource *r
     params->fds[i] = -1;
   }
 
-  struct wl_resource *param_res = wl_resource_create(client, &zwp_linux_buffer_params_v1_interface,
-                                                     wl_resource_get_version(resource), params_id);
+  struct wl_resource *param_res =
+      wl_resource_create(client, &zwp_linux_buffer_params_v1_interface,
+                         wl_resource_get_version(resource), params_id);
   if (!param_res) {
     free(params);
     wl_client_post_no_memory(client);
     return;
   }
 
-  wl_resource_set_implementation(param_res, &ds_params_impl, params, params_resource_destroy);
+  wl_resource_set_implementation(param_res, &ds_params_impl, params,
+                                 params_resource_destroy);
 }
 
-static void dmabuf_get_default_feedback(struct wl_client *client, struct wl_resource *resource,
+static void dmabuf_get_default_feedback(struct wl_client *client,
+                                        struct wl_resource *resource,
                                         uint32_t id) {
-  (void)client; (void)resource; (void)id;
+  (void)client;
+  (void)resource;
+  (void)id;
 }
 
-static void dmabuf_get_surface_feedback(struct wl_client *client, struct wl_resource *resource,
-                                        uint32_t id, struct wl_resource *surface) {
-  (void)client; (void)resource; (void)id; (void)surface;
+static void dmabuf_get_surface_feedback(struct wl_client *client,
+                                        struct wl_resource *resource,
+                                        uint32_t id,
+                                        struct wl_resource *surface) {
+  (void)client;
+  (void)resource;
+  (void)id;
+  (void)surface;
 }
 
 static const struct zwp_linux_dmabuf_v1_interface ds_dmabuf_impl = {
@@ -210,9 +243,10 @@ static const struct zwp_linux_dmabuf_v1_interface ds_dmabuf_impl = {
     .get_surface_feedback = dmabuf_get_surface_feedback,
 };
 
-static void dmabuf_bind(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
-  struct wl_resource *resource = wl_resource_create(client, &zwp_linux_dmabuf_v1_interface,
-                                                   version, id);
+static void dmabuf_bind(struct wl_client *client, void *data, uint32_t version,
+                        uint32_t id) {
+  struct wl_resource *resource =
+      wl_resource_create(client, &zwp_linux_dmabuf_v1_interface, version, id);
   if (!resource) {
     wl_client_post_no_memory(client);
     return;
@@ -229,7 +263,8 @@ static void dmabuf_bind(struct wl_client *client, void *data, uint32_t version, 
 
   for (size_t i = 0; i < count; i++) {
     if (version >= 3) {
-      zwp_linux_dmabuf_v1_send_modifier(resource, formats[i], 0, 0); /* DRM_FORMAT_MOD_LINEAR */
+      zwp_linux_dmabuf_v1_send_modifier(resource, formats[i], 0,
+                                        0); /* DRM_FORMAT_MOD_LINEAR */
     } else {
       zwp_linux_dmabuf_v1_send_format(resource, formats[i]);
     }
@@ -237,7 +272,7 @@ static void dmabuf_bind(struct wl_client *client, void *data, uint32_t version, 
 }
 
 int ds_dmabuf_init(struct ds_server *server) {
-  server->dmabuf_global = wl_global_create(server->display, &zwp_linux_dmabuf_v1_interface, 3,
-                                           server, dmabuf_bind);
+  server->dmabuf_global = wl_global_create(
+      server->display, &zwp_linux_dmabuf_v1_interface, 3, server, dmabuf_bind);
   return server->dmabuf_global ? 0 : -1;
 }

@@ -14,6 +14,10 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#ifndef GL_UNPACK_ROW_LENGTH
+#define GL_UNPACK_ROW_LENGTH 0x0CF2
+#endif
+
 struct ds_gl_context {
   EGLDisplay display;
   EGLContext context;
@@ -121,10 +125,6 @@ static void upload_subrect(struct ds_surface *surf, int width, int height,
 /* Import one single-plane linear dmabuf into the presentation texture.
  * Multi-plane or tiled buffers are skipped, the old frame stays up. */
 static void upload_dmabuf_mmap_fallback(struct ds_surface *surf,
-                                        struct ds_buffer *buf);
-/* Last resort when EGLImage import fails: map the dma-buf on CPU and
- * upload like SHM. Works for system-memory buffers, not GPU-private ones. */
-static void upload_dmabuf_mmap_fallback(struct ds_surface *surf,
                                         struct ds_buffer *buf) {
   if (!buf || buf->dmabuf_num_planes != 1 || buf->dmabuf_fds[0] < 0)
     return;
@@ -140,33 +140,45 @@ static void upload_dmabuf_mmap_fallback(struct ds_surface *surf,
   if (stride < (size_t)buf->width * 4)
     return;
 
-  void *map = mmap(NULL, need, PROT_READ, MAP_SHARED, buf->dmabuf_fds[0], 0);
-  if (map == MAP_FAILED) {
-    DS_LOGE("dmabuf mmap failed, giving up on this buffer");
-    return;
+  /* Map persistently per ds_buffer to eliminate per-frame mmap/munmap overhead
+   */
+  if (!buf->mmap_data || buf->mmap_data == MAP_FAILED) {
+    buf->mmap_data =
+        mmap(NULL, need, PROT_READ, MAP_SHARED, buf->dmabuf_fds[0], 0);
+    if (buf->mmap_data == MAP_FAILED) {
+      DS_LOGE("dmabuf mmap failed, giving up on this buffer");
+      return;
+    }
+    buf->mmap_size = need;
   }
 
-  uint8_t *data = (uint8_t *)map + buf->dmabuf_offsets[0];
+  uint8_t *data = (uint8_t *)buf->mmap_data + buf->dmabuf_offsets[0];
+  glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
+
   if (stride == (size_t)buf->width * 4) {
     upload_subrect(surf, buf->width, buf->height, data, stride);
   } else {
-    size_t row = (size_t)buf->width * 4;
-    size_t needed = row * (size_t)buf->height;
-    uint8_t *tight = ensure_staging_buf(needed);
-    if (tight) {
-      for (int y = 0; y < buf->height; y++) {
-        memcpy(tight + (size_t)y * row, data + (size_t)y * stride, row);
-      }
-      upload_tight_pixels(buf->width, buf->height, tight);
+    /* Use GL_UNPACK_ROW_LENGTH to let GPU DMA load padded rows directly,
+     * completely eliminating CPU memcpy and staging buffers */
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(stride / 4));
+    if (g_gl.tex_w == buf->width && g_gl.tex_h == buf->height) {
+      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, buf->width, buf->height,
+                      GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
+    } else {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, buf->width, buf->height, 0,
+                   GL_BGRA_EXT, GL_UNSIGNED_BYTE, data);
+      g_gl.tex_w = buf->width;
+      g_gl.tex_h = buf->height;
     }
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   }
-  munmap(map, need);
   log_gl_error("upload_dmabuf_mmap");
 
   if (!g_first_frame_logged) {
     g_first_frame_logged = 1;
-    DS_LOGI("presented first dmabuf frame via mmap (%dx%d)", buf->width,
-            buf->height);
+    DS_LOGI(
+        "presented first dmabuf frame via direct unpack (%dx%d, stride=%zu)",
+        buf->width, buf->height, stride);
   }
 }
 
@@ -191,60 +203,9 @@ static void upload_dmabuf_buffer(struct ds_surface *surf,
     return;
   }
 
-  resolve_image_procs();
-  if (!g_eglCreateImageKHR || !g_eglDestroyImageKHR ||
-      !g_glEGLImageTargetTexture2DOES) {
-    DS_LOGE("dmabuf import procs missing");
-    return;
-  }
-
-  /* MODIFIER_LO/HI are only valid with
-   * EGL_EXT_image_dma_buf_import_modifiers. Drivers without it fail the
-   * whole import with EGL_BAD_ACCESS when they appear, so for linear
-   * buffers (the only ones accepted above) they stay out. */
-  EGLint attrs[] = {
-      EGL_WIDTH,
-      buf->width,
-      EGL_HEIGHT,
-      buf->height,
-      EGL_LINUX_DRM_FOURCC_EXT,
-      (EGLint)buf->format,
-      EGL_DMA_BUF_PLANE0_FD_EXT,
-      buf->dmabuf_fds[0],
-      EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-      (EGLint)buf->dmabuf_offsets[0],
-      EGL_DMA_BUF_PLANE0_PITCH_EXT,
-      (EGLint)buf->dmabuf_strides[0],
-      EGL_NONE,
-  };
-
-  EGLImageKHR img = g_eglCreateImageKHR(g_gl.display, EGL_NO_CONTEXT,
-                                        EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
-  if (img == EGL_NO_IMAGE_KHR) {
-    /* Log once with the full attrs: per-frame logcat writes cost FPS too. */
-    static int fail_logged = 0;
-    if (!fail_logged) {
-      fail_logged = 1;
-      EGLint err = eglGetError();
-      DS_LOGI("dmabuf import failed once: err=0x%x %dx%d fourcc=0x%x stride=%u "
-              "offset=%u",
-              err, buf->width, buf->height, buf->format, buf->dmabuf_strides[0],
-              buf->dmabuf_offsets[0]);
-    } else {
-      (void)eglGetError();
-    }
-    upload_dmabuf_mmap_fallback(surf, buf);
-    return;
-  }
-
-  glBindTexture(GL_TEXTURE_2D, g_gl.texture_id);
-  g_glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, img);
-  g_eglDestroyImageKHR(g_gl.display, img);
-
-  if (!g_first_frame_logged) {
-    g_first_frame_logged = 1;
-    DS_LOGI("presented first dmabuf frame (%dx%d)", buf->width, buf->height);
-  }
+  /* Since Android EGL lacks EGL_EXT_image_dma_buf_import, we use
+   * persistent mmap with GL_UNPACK_ROW_LENGTH directly. */
+  upload_dmabuf_mmap_fallback(surf, buf);
 }
 /* Report the first GL/EGL error with a tag so logcat shows what failed */
 static void log_gl_error(const char *tag) {
@@ -378,14 +339,23 @@ static int ensure_context(struct ds_server *server) {
     return -1;
   }
 
-  const EGLint ctx_attribs[] = {
+  const EGLint ctx_attribs_v3[] = {
       EGL_CONTEXT_CLIENT_VERSION,
-      2,
+      3,
       EGL_NONE,
   };
 
-  g_gl.context =
-      eglCreateContext(g_gl.display, g_gl.config, EGL_NO_CONTEXT, ctx_attribs);
+  g_gl.context = eglCreateContext(g_gl.display, g_gl.config, EGL_NO_CONTEXT,
+                                  ctx_attribs_v3);
+  if (g_gl.context == EGL_NO_CONTEXT) {
+    const EGLint ctx_attribs_v2[] = {
+        EGL_CONTEXT_CLIENT_VERSION,
+        2,
+        EGL_NONE,
+    };
+    g_gl.context = eglCreateContext(g_gl.display, g_gl.config, EGL_NO_CONTEXT,
+                                    ctx_attribs_v2);
+  }
   if (g_gl.context == EGL_NO_CONTEXT) {
     DS_LOGE("eglCreateContext failed");
     return -1;

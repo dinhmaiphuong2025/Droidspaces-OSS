@@ -20,17 +20,32 @@
 #include <android/native_window_jni.h>
 
 #define DS_LOG_TAG "DsWaylandServer"
-#define DS_LOGI(...) __android_log_print(ANDROID_LOG_INFO, DS_LOG_TAG, __VA_ARGS__)
-#define DS_LOGW(...) __android_log_print(ANDROID_LOG_WARN, DS_LOG_TAG, __VA_ARGS__)
-#define DS_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, DS_LOG_TAG, __VA_ARGS__)
+#define DS_LOGI(...)                                                           \
+  __android_log_print(ANDROID_LOG_INFO, DS_LOG_TAG, __VA_ARGS__)
+#define DS_LOGW(...)                                                           \
+  __android_log_print(ANDROID_LOG_WARN, DS_LOG_TAG, __VA_ARGS__)
+#define DS_LOGE(...)                                                           \
+  __android_log_print(ANDROID_LOG_ERROR, DS_LOG_TAG, __VA_ARGS__)
 #else
 typedef void ANativeWindow;
 typedef void AHardwareBuffer;
 static inline void AHardwareBuffer_release(AHardwareBuffer *b) { (void)b; }
 #define DS_LOG_TAG "DsWaylandServer"
-#define DS_LOGI(...) do { printf("[INFO] " __VA_ARGS__); printf("\n"); } while(0)
-#define DS_LOGW(...) do { printf("[WARN] " __VA_ARGS__); printf("\n"); } while(0)
-#define DS_LOGE(...) do { printf("[ERROR] " __VA_ARGS__); printf("\n"); } while(0)
+#define DS_LOGI(...)                                                           \
+  do {                                                                         \
+    printf("[INFO] " __VA_ARGS__);                                             \
+    printf("\n");                                                              \
+  } while (0)
+#define DS_LOGW(...)                                                           \
+  do {                                                                         \
+    printf("[WARN] " __VA_ARGS__);                                             \
+    printf("\n");                                                              \
+  } while (0)
+#define DS_LOGE(...)                                                           \
+  do {                                                                         \
+    printf("[ERROR] " __VA_ARGS__);                                            \
+    printf("\n");                                                              \
+  } while (0)
 #endif
 
 #include "linux-dmabuf-v1-server-protocol.h"
@@ -64,6 +79,8 @@ struct ds_buffer {
   uint32_t format;
   int is_dmabuf;
   int is_shm;
+  void *mmap_data;
+  size_t mmap_size;
   struct ds_surface *surface;
   struct wl_listener destroy_listener;
 };
@@ -84,6 +101,7 @@ struct ds_surface {
 
   struct ds_buffer *pending_buffer;
   struct ds_buffer *current_buffer;
+  struct ds_buffer *previous_buffer;
   int32_t pending_sx;
   int32_t pending_sy;
 
@@ -184,12 +202,33 @@ enum ds_input_type {
 struct ds_input_event {
   enum ds_input_type type;
   union {
-    struct { uint32_t key; uint32_t state; } key;
-    struct { float x; float y; float dx; float dy; } pointer_motion;
-    struct { uint32_t button; uint32_t state; } pointer_button;
-    struct { uint32_t axis; float value; } pointer_axis;
-    struct { int32_t id; float x; float y; } touch;
-    struct { int32_t width; int32_t height; } resize;
+    struct {
+      uint32_t key;
+      uint32_t state;
+    } key;
+    struct {
+      float x;
+      float y;
+      float dx;
+      float dy;
+    } pointer_motion;
+    struct {
+      uint32_t button;
+      uint32_t state;
+    } pointer_button;
+    struct {
+      uint32_t axis;
+      float value;
+    } pointer_axis;
+    struct {
+      int32_t id;
+      float x;
+      float y;
+    } touch;
+    struct {
+      int32_t width;
+      int32_t height;
+    } resize;
   };
 };
 
@@ -240,7 +279,8 @@ void ds_seat_dispatch_queue(struct ds_server *server);
 int ds_compositor_init(struct ds_server *server);
 int ds_xdg_shell_init(struct ds_server *server);
 int ds_dmabuf_init(struct ds_server *server);
-int ds_output_init(struct ds_server *server, int width, int height, int refresh_mhz);
+int ds_output_init(struct ds_server *server, int width, int height,
+                   int refresh_mhz);
 void ds_output_send_current_mode(struct ds_output *output);
 int ds_seat_init(struct ds_server *server);
 int ds_viewporter_init(struct ds_server *server);
@@ -251,7 +291,8 @@ void ds_shm_free_buffer(struct ds_buffer *buf);
 
 /* Presenter API */
 void ds_presenter_init(struct ds_server *server);
-void ds_presenter_present_surface(struct ds_server *server, struct ds_surface *surf);
+void ds_presenter_present_surface(struct ds_server *server,
+                                  struct ds_surface *surf);
 void ds_presenter_detach(struct ds_server *server);
 void ds_presenter_destroy(struct ds_server *server);
 
@@ -264,19 +305,26 @@ void ds_server_enqueue_resize(struct ds_server *server, int width, int height);
 void ds_xdg_shell_resize_all(struct ds_server *server);
 
 /* Input API (called from JNI) */
-void ds_seat_send_touch_down(struct ds_server *server, int32_t id, float x, float y);
-void ds_seat_send_touch_motion(struct ds_server *server, int32_t id, float x, float y);
+void ds_seat_send_touch_down(struct ds_server *server, int32_t id, float x,
+                             float y);
+void ds_seat_send_touch_motion(struct ds_server *server, int32_t id, float x,
+                               float y);
 void ds_seat_send_touch_up(struct ds_server *server, int32_t id);
 void ds_seat_send_touch_frame(struct ds_server *server);
 
-void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y, float dx, float dy);
-void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button, uint32_t state);
-void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis, float value);
+void ds_seat_send_pointer_motion(struct ds_server *server, float x, float y,
+                                 float dx, float dy);
+void ds_seat_send_pointer_button(struct ds_server *server, uint32_t button,
+                                 uint32_t state);
+void ds_seat_send_pointer_axis(struct ds_server *server, uint32_t axis,
+                               float value);
 
 void ds_seat_send_key(struct ds_server *server, uint32_t key, uint32_t state);
 
-/* Notify seat that a surface was destroyed so it can send leave and reset focus */
-void ds_seat_surface_destroyed(struct ds_server *server, struct ds_surface *surf);
+/* Notify seat that a surface was destroyed so it can send leave and reset focus
+ */
+void ds_seat_surface_destroyed(struct ds_server *server,
+                               struct ds_surface *surf);
 
 /* Frame timer tick, flushes paced frame callbacks on the event loop */
 int ds_frame_timer_tick(void *data);
