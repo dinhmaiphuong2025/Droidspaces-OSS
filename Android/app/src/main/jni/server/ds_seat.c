@@ -111,11 +111,15 @@ static void seat_resource_destroy(struct wl_resource *resource) {
 static void pointer_set_cursor(struct wl_client *client, struct wl_resource *resource,
                                uint32_t serial, struct wl_resource *surface,
                                int32_t hotspot_x, int32_t hotspot_y) {
-  (void)client; (void)resource; (void)serial; (void)hotspot_x; (void)hotspot_y;
+  (void)client; (void)serial; (void)hotspot_x; (void)hotspot_y;
+  struct ds_seat *seat = wl_resource_get_user_data(resource);
   if (surface) {
     struct ds_surface *surf = wl_resource_get_user_data(surface);
     if (surf) {
       surf->role = DS_SURFACE_ROLE_CURSOR;
+      if (seat && seat->pointer_focus == surf) {
+        seat->pointer_focus = NULL;
+      }
     }
   }
 }
@@ -305,8 +309,8 @@ static uint32_t now_ms(void) {
  * changes, leave is sent on the old surface before enter on the new one. */
 
 /* Helper: find the best surface to receive input. Prefers the currently active
- * surface (most recent buffer commit), falling back to the first available
- * surface if none is active yet. */
+ * surface (most recent buffer commit), falling back to mapped XDG surfaces.
+ * Internal roles such as cursors and unconfigured surfaces must never receive focus. */
 static struct ds_surface *get_target_surface(struct ds_server *server) {
   if (!server) return NULL;
   if (server->active_surface && server->active_surface->xdg_surf &&
@@ -319,9 +323,9 @@ static struct ds_surface *get_target_surface(struct ds_server *server) {
       return surf;
     }
   }
-  /* Fallback: any surface with an xdg_surf or resource that isn't a cursor */
+  /* Fallback: any surface with an xdg_surf that is not a cursor */
   wl_list_for_each(surf, &server->surfaces, link) {
-    if (surf->role != DS_SURFACE_ROLE_CURSOR && surf->resource) {
+    if (surf->xdg_surf && surf->role != DS_SURFACE_ROLE_CURSOR) {
       return surf;
     }
   }

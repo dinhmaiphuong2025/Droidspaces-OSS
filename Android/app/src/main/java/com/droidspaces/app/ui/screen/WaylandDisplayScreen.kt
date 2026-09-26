@@ -314,18 +314,23 @@ fun WaylandDisplayScreen(
         }
     }
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .onGloballyPositioned {
-                stageW = it.size.width
-                stageH = it.size.height
-            }
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .onGloballyPositioned {
+                    stageW = it.size.width
+                    stageH = it.size.height
+                }
+        ) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
                     WaylandSurfaceView(ctx).apply {
                         surfaceViewRef = this
                         onKeyInput = handleKeyInput
@@ -482,54 +487,11 @@ fun WaylandDisplayScreen(
         // Waiting card while no compositor is on the display. Shows the
         // socket paths so a missing connection is diagnosable on the spot,
         // and hides itself once a client connects.
-        AnimatedVisibility(
+        WaylandWaitingCard(
             visible = !isConnected,
-            enter = fadeIn(),
-            exit = fadeOut(),
+            socketDir = socketDir,
             modifier = Modifier.align(Alignment.Center)
-        ) {
-            Surface(
-                modifier = Modifier
-                    .padding(horizontal = 24.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                        shape = RoundedCornerShape(20.dp)
-                    ),
-                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
-                tonalElevation = 0.dp
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    horizontalAlignment = Alignment.Start
-                ) {
-                    Text(
-                        text = "Waiting for compositor",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        text = "No compositor is connected to this display yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
-                    Text(
-                        text = "Host: /data/local/tmp/ds-wayland/$socketDir/wayland-0",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono)
-                    )
-                    Text(
-                        text = "Container: /run/ds-wayland/$socketDir/wayland-0",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono)
-                    )
-                    Text(
-                        text = "Check: systemctl status niri",
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
-                }
-            }
-        }
+        )
 
         // Control pill, draggable, snaps to the nearest side edge on release.
         // Taps still reach the buttons: the drag detector only consumes
@@ -652,8 +614,9 @@ fun WaylandDisplayScreen(
                 }
             }
         }
+        }
 
-        // Extra keys bar docked at the bottom, directly above Gboard
+        // Extra keys bar docked sequentially below the Wayland display area
         WaylandExtraKeysDock(
             rows = extraKeyRows,
             modifiers = modifiers,
@@ -672,7 +635,6 @@ fun WaylandDisplayScreen(
             },
             onEdit = { showExtraEditor = true },
             modifier = Modifier
-                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .imePadding()
         )
@@ -689,5 +651,61 @@ fun WaylandDisplayScreen(
                 showExtraEditor = false
             }
         )
+    }
+}
+
+@Composable
+private fun WaylandWaitingCard(
+    visible: Boolean,
+    socketDir: String,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier
+    ) {
+        Surface(
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                    shape = RoundedCornerShape(20.dp)
+                ),
+            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.95f),
+            tonalElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text(
+                    text = "Waiting for compositor",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "No compositor is connected to this display yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+                Text(
+                    text = "Host: /data/local/tmp/ds-wayland/$socketDir/wayland-0",
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono)
+                )
+                Text(
+                    text = "Container: /run/ds-wayland/$socketDir/wayland-0",
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono)
+                )
+                Text(
+                    text = "Check: systemctl status niri",
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMono),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+        }
     }
 }
