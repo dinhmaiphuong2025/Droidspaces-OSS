@@ -59,7 +59,8 @@ static void client_created_notify(struct wl_listener *listener, void *data) {
       wl_container_of(listener, server, client_created_listener);
   struct wl_client *client = data;
   struct ds_client_tracker *tracker = calloc(1, sizeof(*tracker));
-  if (!tracker) return;
+  if (!tracker)
+    return;
   tracker->server = server;
   tracker->destroy_listener.notify = client_destroy_notify;
   wl_client_add_destroy_listener(client, &tracker->destroy_listener);
@@ -83,15 +84,18 @@ static void *server_event_thread(void *arg) {
   return NULL;
 }
 
-struct ds_server *ds_server_create(const char *socket_dir, int width, int height,
-                                  int refresh_mhz, ANativeWindow *window) {
+struct ds_server *ds_server_create(const char *socket_dir, int width,
+                                   int height, int refresh_mhz,
+                                   ANativeWindow *window) {
   /* Advertise what the panel actually runs at: the frame callbacks and the
    * wl_output mode pace every client, so capping this at 60 kept niri at
    * 60 even on a 120Hz screen. The clamped range only guards garbage. */
-  if (refresh_mhz <= 0 || refresh_mhz > 240000) refresh_mhz = 60000;
+  if (refresh_mhz <= 0 || refresh_mhz > 240000)
+    refresh_mhz = 60000;
 
   struct ds_server *server = calloc(1, sizeof(*server));
-  if (!server) return NULL;
+  if (!server)
+    return NULL;
 
   pthread_mutex_init(&server->lock, NULL);
   wl_list_init(&server->surfaces);
@@ -118,10 +122,12 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
 
   server->loop = wl_display_get_event_loop(server->display);
   if (server->input_eventfd >= 0) {
-    server->input_source = wl_event_loop_add_fd(server->loop, server->input_eventfd,
-                                                WL_EVENT_READABLE, on_input_eventfd, server);
+    server->input_source =
+        wl_event_loop_add_fd(server->loop, server->input_eventfd,
+                             WL_EVENT_READABLE, on_input_eventfd, server);
   }
-  server->frame_timer = wl_event_loop_add_timer(server->loop, ds_frame_timer_tick, server);
+  server->frame_timer =
+      wl_event_loop_add_timer(server->loop, ds_frame_timer_tick, server);
 
   /* Set up socket directory */
   if (socket_dir && strlen(socket_dir) > 0) {
@@ -130,21 +136,27 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
     setenv("XDG_RUNTIME_DIR", socket_dir, 1);
   }
 
-  /* Unlink existing wayland-0 socket to prevent EADDRINUSE and avoid auto-increment */
+  /* Unlink existing wayland-0 socket to prevent EADDRINUSE and avoid
+   * auto-increment */
   char sock_path[512];
   snprintf(sock_path, sizeof(sock_path), "%s/wayland-0",
-           (socket_dir && strlen(socket_dir) > 0) ? socket_dir : "/data/local/tmp/ds-wayland");
+           (socket_dir && strlen(socket_dir) > 0)
+               ? socket_dir
+               : "/data/local/tmp/ds-wayland");
   unlink(sock_path);
 
   /* Drop the libwayland lock too: after reinstall the app uid changes and
    * a stale lock owned by the old uid blocks the new server. */
   char lock_path[512];
   snprintf(lock_path, sizeof(lock_path), "%s/wayland-0.lock",
-           (socket_dir && strlen(socket_dir) > 0) ? socket_dir : "/data/local/tmp/ds-wayland");
+           (socket_dir && strlen(socket_dir) > 0)
+               ? socket_dir
+               : "/data/local/tmp/ds-wayland");
   unlink(lock_path);
 
   if (wl_display_add_socket(server->display, "wayland-0") < 0) {
-    DS_LOGE("Failed to add socket wayland-0 to Wayland display: %s", strerror(errno));
+    DS_LOGE("Failed to add socket wayland-0 to Wayland display: %s",
+            strerror(errno));
     wl_display_destroy(server->display);
     free(server);
     return NULL;
@@ -172,7 +184,8 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
 
   /* Start event loop thread */
   atomic_store(&server->running, 1);
-  if (pthread_create(&server->loop_thread, NULL, server_event_thread, server) != 0) {
+  if (pthread_create(&server->loop_thread, NULL, server_event_thread, server) !=
+      0) {
     DS_LOGE("Failed to create server event loop thread: %s", strerror(errno));
     wl_display_destroy(server->display);
     free(server);
@@ -185,11 +198,21 @@ struct ds_server *ds_server_create(const char *socket_dir, int width, int height
 /* Swap the native window without touching the display or its clients.
  * Callers must hold server->lock: the event thread presents under it. */
 void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
-                             int width, int height) {
-  if (!server) return;
+                             int width, int height, int refresh_mhz) {
+  if (!server)
+    return;
 
   int window_changed = (server->window != win);
   int size_changed = (server->width != width || server->height != height);
+  int refresh_changed = (refresh_mhz > 0 && server->refresh_mhz != refresh_mhz);
+
+  if (refresh_changed) {
+    server->refresh_mhz = refresh_mhz;
+    if (server->output) {
+      server->output->refresh_mhz = refresh_mhz;
+      ds_output_send_current_mode(server->output);
+    }
+  }
 
   if (window_changed) {
     if (server->window) {
@@ -213,12 +236,14 @@ void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
     ds_server_enqueue_resize(server, width, height);
   }
   DS_LOGI("Wayland surface attached (%dx%d)%s", width, height,
-          window_changed ? " [new window]" : (size_changed ? " [resized]" : " [unchanged]"));
+          window_changed ? " [new window]"
+                         : (size_changed ? " [resized]" : " [unchanged]"));
 }
 
 /* Drop the native window but keep clients connected for instant resume. */
 void ds_server_detach_window(struct ds_server *server) {
-  if (!server) return;
+  if (!server)
+    return;
 
   ds_presenter_detach(server);
   if (server->window) {
@@ -229,7 +254,8 @@ void ds_server_detach_window(struct ds_server *server) {
 }
 
 void ds_server_destroy(struct ds_server *server) {
-  if (!server) return;
+  if (!server)
+    return;
 
   DS_LOGI("Stopping Wayland Server...");
   atomic_store(&server->running, 0);
@@ -249,7 +275,8 @@ void ds_server_destroy(struct ds_server *server) {
   }
 
   if (server->output) {
-    if (server->output->global) wl_global_destroy(server->output->global);
+    if (server->output->global)
+      wl_global_destroy(server->output->global);
     free(server->output);
   }
 
@@ -268,16 +295,23 @@ void ds_server_destroy(struct ds_server *server) {
   pthread_mutex_destroy(&server->input_lock);
 
   if (server->seat) {
-    if (server->seat->global) wl_global_destroy(server->seat->global);
-    if (server->seat->keymap_fd >= 0) close(server->seat->keymap_fd);
+    if (server->seat->global)
+      wl_global_destroy(server->seat->global);
+    if (server->seat->keymap_fd >= 0)
+      close(server->seat->keymap_fd);
     free(server->seat);
   }
 
-  if (server->compositor_global) wl_global_destroy(server->compositor_global);
-  if (server->subcompositor_global) wl_global_destroy(server->subcompositor_global);
-  if (server->xdg_wm_base_global) wl_global_destroy(server->xdg_wm_base_global);
-  if (server->dmabuf_global) wl_global_destroy(server->dmabuf_global);
-  if (server->viewporter_global) wl_global_destroy(server->viewporter_global);
+  if (server->compositor_global)
+    wl_global_destroy(server->compositor_global);
+  if (server->subcompositor_global)
+    wl_global_destroy(server->subcompositor_global);
+  if (server->xdg_wm_base_global)
+    wl_global_destroy(server->xdg_wm_base_global);
+  if (server->dmabuf_global)
+    wl_global_destroy(server->dmabuf_global);
+  if (server->viewporter_global)
+    wl_global_destroy(server->viewporter_global);
 
   wl_display_destroy(server->display);
   pthread_mutex_destroy(&server->lock);

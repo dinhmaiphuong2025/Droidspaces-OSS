@@ -553,13 +553,11 @@ void ds_presenter_present_surface(struct ds_server *server,
   glDisableVertexAttribArray(0);
   glDisableVertexAttribArray(1);
 
-  /* surface_commit releases the wl_buffer as soon as this function
-   * returns, but GL commands are queued: the driver may still be reading
-   * the client's SHM rows or dmabuf when the client is told the buffer is
-   * free. It then redraws over the bytes we are sampling and the panel
-   * shows up half new, half old while the pointer moves. Draining here
-   * costs the same time as the blocking upload did before. */
-  glFinish();
+  /* surface_commit double buffers so the client cannot overwrite the buffer
+   * we are sampling. Flush queued GL commands to the driver pipeline without
+   * blocking the CPU so Wayland frame callbacks reach the client in time for
+   * 120 FPS pacing. */
+  glFlush();
 
   /* SwapBuffers only when a real frame was committed -> ZERO FLICKER */
   if (!eglSwapBuffers(g_gl.display, g_gl.surface)) {

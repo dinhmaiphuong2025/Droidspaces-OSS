@@ -299,7 +299,7 @@ void ds_presenter_destroy(struct ds_server *server);
 /* Server window lifecycle: the display and its clients survive surface
  * changes, only the native window and EGL surface are swapped. */
 void ds_server_attach_window(struct ds_server *server, ANativeWindow *win,
-                             int width, int height);
+                             int width, int height, int refresh_mhz);
 void ds_server_detach_window(struct ds_server *server);
 void ds_server_enqueue_resize(struct ds_server *server, int width, int height);
 void ds_xdg_shell_resize_all(struct ds_server *server);
