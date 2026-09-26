@@ -390,9 +390,10 @@ static int ensure_surface(struct ds_server *server) {
     return -1;
   }
 
-  /* Disable VSYNC throttle so eglSwapBuffers never blocks presentation.
-   * Android SurfaceFlinger handles its own hardware compositor latching. */
-  eglSwapInterval(g_gl.display, 0);
+  /* Synchronize with display VSYNC (120Hz on supported panels) so
+   * SurfaceFlinger latching remains strictly in-phase across detach/reattach
+   * cycles, eliminating odd/even frame tearing and mouse judder. */
+  eglSwapInterval(g_gl.display, 1);
 
   /* Compile presentation quad shader and setup geometry once */
   if (g_gl.program == 0) {
