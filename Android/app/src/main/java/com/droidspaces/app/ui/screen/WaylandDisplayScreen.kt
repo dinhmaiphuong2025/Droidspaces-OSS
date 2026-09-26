@@ -3,6 +3,8 @@ package com.droidspaces.app.ui.screen
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.SystemClock
 import android.text.InputType
@@ -85,6 +87,12 @@ enum class InputMode {
 private fun isModifierEvdev(code: Int): Boolean =
     code in setOf(29, 97, 56, 100, 42, 54, 125, 126)
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
     var onKeyInput: ((Int, Int) -> Unit)? = null
     var onTextInput: ((String) -> Unit)? = null
@@ -99,10 +107,15 @@ private class WaylandSurfaceView(context: Context) : SurfaceView(context) {
     // at 60. Vote the highest supported mode on both the surface and the
     // window. Below API 30 there is no frame rate API, leave the default.
     fun voteHighestRefresh() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-        val mode = context.display?.supportedModes?.maxByOrNull { it.refreshRate } ?: return
-        holder.surface?.setFrameRate(mode.refreshRate, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
-        val activity = context as? Activity ?: return
+        val targetDisplay = display
+            ?: (context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
+                ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) context.display else null
+        val mode = targetDisplay?.supportedModes?.maxByOrNull { it.refreshRate } ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            holder.surface?.setFrameRate(mode.refreshRate, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+        }
+        val activity = context.findActivity() ?: return
         val lp = activity.window.attributes
         if (lp.preferredDisplayModeId != mode.modeId) {
             lp.preferredDisplayModeId = mode.modeId
@@ -332,14 +345,13 @@ fun WaylandDisplayScreen(
                                 // lands, so advertise the highest mode the panel
                                 // supports; wl_output mode and frame callbacks pace
                                 // niri from this number.
-                                val refreshRate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                    ctx.display?.supportedModes?.maxOfOrNull { it.refreshRate }
-                                        ?: ctx.display?.refreshRate ?: 60f
-                                } else {
-                                    @Suppress("DEPRECATION")
-                                    (ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
-                                        .defaultDisplay.refreshRate
-                                }
+                                val targetDisplay = this@apply.display
+                                    ?: (ctx.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
+                                        ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                                    ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ctx.display else null
+                                val refreshRate = targetDisplay?.supportedModes?.maxOfOrNull { it.refreshRate }
+                                    ?: targetDisplay?.refreshRate
+                                    ?: 60f
                                 val refreshMhz = (refreshRate * 1000).toInt()
 
                                 val socketPath = "/data/local/tmp/ds-wayland/$socketDir/wayland-0"
