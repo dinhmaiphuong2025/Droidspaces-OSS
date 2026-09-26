@@ -144,9 +144,6 @@ static void surface_set_input_region(struct wl_client *client,
   (void)region_resource;
 }
 
-static void surface_send_frames(struct ds_server *server,
-                                struct ds_surface *surf, uint32_t msec);
-
 static void flush_frame_callbacks(struct ds_surface *surf, uint32_t msec) {
   struct ds_frame_callback *cb, *tmp;
   wl_list_for_each_safe(cb, tmp, &surf->frame_callback_list, link) {
@@ -251,23 +248,6 @@ static uint32_t frame_interval_ms(struct ds_server *server) {
       return 1000 / hz;
   }
   return 16;
-}
-
-static void surface_send_frames(struct ds_server *server,
-                                struct ds_surface *surf, uint32_t msec) {
-  if (wl_list_empty(&surf->frame_callback_list))
-    return;
-  uint32_t interval = frame_interval_ms(server);
-  if (msec - surf->last_frame_ms >= interval) {
-    flush_frame_callbacks(surf, msec);
-    return;
-  }
-  if (server->frame_timer) {
-    wl_event_source_timer_update(
-        server->frame_timer, (int)(interval - (msec - surf->last_frame_ms)));
-  } else {
-    flush_frame_callbacks(surf, msec);
-  }
 }
 
 int ds_frame_timer_tick(void *data) {
